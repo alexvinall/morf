@@ -4,10 +4,13 @@
   <parent>
     <groupId>org.alfasoftware</groupId>
     <artifactId>morf-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.4-SNAPSHOT</version>
   </parent>
   
   <name>Morf - H2</name>
+  <description>Morf is a library for cross-platform evolutionary relational database mechanics, database access and database imaging/cloning.</description>
+  <url>https://github.com/alfasoftware/morf</url>
+
   <artifactId>morf-h2</artifactId>
 
   <build>
@@ -42,11 +45,9 @@
       <artifactId>log4j</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+    </dependency>
   </dependencies>
-  
-  <scm>
-    <connection>scm:svn:https://data.svn.chpglobal.net/Personal/venushkap/Morf/trunk/morf-h2</connection>
-    <developerConnection>scm:svn:https://data.svn.chpglobal.net/Personal/venushkap/Morf/trunk/morf-h2</developerConnection>
-    <url>https://data.svn.chpglobal.net/Personal/venushkap/Morf/trunk/morf-h2</url>
-  </scm>
 </project>

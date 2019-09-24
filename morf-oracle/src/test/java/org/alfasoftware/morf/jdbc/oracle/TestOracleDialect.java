@@ -15,7 +15,9 @@
 
 package org.alfasoftware.morf.jdbc.oracle;
 
+import static org.alfasoftware.morf.jdbc.oracle.OracleDialect.NULLS_LAST;
 import static org.alfasoftware.morf.sql.SqlUtils.parameter;
+import static org.alfasoftware.morf.sql.element.Direction.ASCENDING;
 import static org.hamcrest.Matchers.contains;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
@@ -23,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
@@ -30,6 +33,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
@@ -39,6 +43,7 @@ import org.alfasoftware.morf.jdbc.SqlDialect;
 import org.alfasoftware.morf.jdbc.SqlScriptExecutor;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.SchemaUtils;
+import org.alfasoftware.morf.sql.element.Direction;
 import org.alfasoftware.morf.sql.element.SqlParameter;
 import org.mockito.ArgumentCaptor;
 
@@ -286,7 +291,7 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
    */
   @Override
   protected String expectedParameterisedInsertStatement() {
-    return "insert /*+ append */ INTO TESTSCHEMA.Test (id, version, stringField, intField, floatField, dateField, booleanField, charField, blobField, bigIntegerField, clobField) VALUES (5, :version, N'Escap''d', 7, :floatField, 20100405, 1, :charField, :blobField, :bigIntegerField, :clobField)";
+    return "INSERT INTO TESTSCHEMA.Test (id, version, stringField, intField, floatField, dateField, booleanField, charField, blobField, bigIntegerField, clobField) VALUES (5, :version, N'Escap''d', 7, :floatField, 20100405, 1, :charField, :blobField, :bigIntegerField, :clobField)";
   }
 
 
@@ -295,7 +300,7 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
    */
   @Override
   protected String expectedParameterisedInsertStatementWithTableInDifferentSchema() {
-    return "insert /*+ append */ INTO MYSCHEMA.Test (id, version, stringField, intField, floatField, dateField, booleanField, charField, blobField, bigIntegerField, clobField) VALUES (5, :version, N'Escap''d', 7, :floatField, 20100405, 1, :charField, :blobField, :bigIntegerField, :clobField)";
+    return "INSERT INTO MYSCHEMA.Test (id, version, stringField, intField, floatField, dateField, booleanField, charField, blobField, bigIntegerField, clobField) VALUES (5, :version, N'Escap''d', 7, :floatField, 20100405, 1, :charField, :blobField, :bigIntegerField, :clobField)";
   }
 
 
@@ -331,8 +336,17 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
    */
   @Override
   protected void verifyPostInsertStatementsNotInsertingUnderAutonumLimit(SqlScriptExecutor sqlScriptExecutor, Connection connection) {
-    verify(sqlScriptExecutor).execute(listCaptor.capture(),eq(connection));
-    assertThat(listCaptor.getValue(),contains("DECLARE \n" +
+    verify(sqlScriptExecutor,times(2)).execute(listCaptor.capture(),eq(connection));
+    assertThat(listCaptor.getAllValues().get(0),contains("DECLARE \n" +
+        "  e exception; \n" +
+        "  pragma exception_init(e,-4080); \n" +
+        "BEGIN \n" +
+        "  EXECUTE IMMEDIATE 'DROP TRIGGER TESTSCHEMA.TEST_TG'; \n" +
+        "EXCEPTION \n" +
+        "  WHEN e THEN \n" +
+        "    null; \n" +
+        "END;"));
+    assertThat(listCaptor.getAllValues().get(1),contains("DECLARE \n" +
         "  e exception; \n" +
         "  pragma exception_init(e,-4080); \n" +
         "BEGIN \n" +
@@ -439,7 +453,7 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
    */
   @Override
   protected String expectedParameterisedInsertStatementWithNoColumnValues() {
-    return "insert /*+ append */ INTO TESTSCHEMA.Test (id, version, stringField, intField, floatField, dateField, booleanField, charField, blobField, bigIntegerField, clobField) VALUES (:id, :version, :stringField, :intField, :floatField, :dateField, :booleanField, :charField, :blobField, :bigIntegerField, :clobField)";
+    return "INSERT INTO TESTSCHEMA.Test (id, version, stringField, intField, floatField, dateField, booleanField, charField, blobField, bigIntegerField, clobField) VALUES (:id, :version, :stringField, :intField, :floatField, :dateField, :booleanField, :charField, :blobField, :bigIntegerField, :clobField)";
   }
 
 
@@ -997,6 +1011,16 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
 
 
   /**
+   * @see org.alfasoftware.morf.jdbc.AbstractSqlDialectTest#expectedAlterColumnChangingLengthAndCase()
+   */
+  @Override
+  protected List<String> expectedAlterColumnChangingLengthAndCase() {
+    return Arrays.asList("ALTER TABLE TESTSCHEMA.Other MODIFY (FloatField DECIMAL(20,3))",
+      "COMMENT ON COLUMN TESTSCHEMA.Other.FloatField IS 'REALNAME:[FloatField]/TYPE:[DECIMAL]'");
+  }
+
+
+  /**
    * It is only necessary to cast for HSQLDB. Returns the value without casting.
    *
    * @see org.alfasoftware.morf.jdbc.AbstractSqlDialectTest#varCharCast(java.lang.String)
@@ -1081,7 +1105,7 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
    */
   @Override
   protected String expectedNow() {
-    return "SYSDATE";
+    return "SYSTIMESTAMP AT TIME ZONE 'UTC'";
   }
 
 
@@ -1277,6 +1301,19 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
 
 
   /**
+   * @see org.alfasoftware.morf.jdbc.AbstractSqlDialectTest#expectedAnalyseTableSql()
+   */
+  @Override
+  protected Collection<String> expectedAnalyseTableSql() {
+    return ImmutableList.of("BEGIN \n" +
+        "DBMS_STATS.GATHER_TABLE_STATS(ownname=> 'testschema', "
+        + "tabname=>'TempTest', "
+            + "cascade=>true, degree=>DBMS_STATS.AUTO_DEGREE, no_invalidate=>false); \n"
+            + "END;");
+  }
+
+
+  /**
    * Checks that the length of the lines in the String passed in does not exceed
    * 2499.
    */
@@ -1380,9 +1417,17 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
    */
   @Override
   protected String expectedHints2(int rowCount) {
-    return "SELECT /*+ INDEX(Foo Foo_1) FIRST_ROWS(" + rowCount + ") ORDERED */ a, b FROM " + tableName("Foo") + " ORDER BY a NULLS FIRST FOR UPDATE";
+    return "SELECT /*+ INDEX(Foo Foo_1) FIRST_ROWS(" + rowCount + ") ORDERED PARALLEL */ a, b FROM " + tableName("Foo") + " ORDER BY a NULLS FIRST FOR UPDATE";
   }
 
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.AbstractSqlDialectTest#expectedHints3
+   */
+  @Override
+  protected String expectedHints3() {
+    return "UPDATE /*+ ENABLE_PARALLEL_DML PARALLEL */ " + tableName("Foo") + " SET a = b";
+  }
 
   /**
    * @see org.alfasoftware.morf.jdbc.AbstractSqlDialectTest#supportsWindowFunctions()
@@ -1396,5 +1441,40 @@ public class TestOracleDialect extends AbstractSqlDialectTest {
   @Override
   protected boolean expectedUsesNVARCHARforStrings() {
     return true; // We do!
+  }
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.AbstractSqlDialectTest#nullOrderForDirection(org.alfasoftware.morf.sql.element.Direction)
+   */
+  @Override
+  protected String nullOrderForDirection(Direction descending) {
+    return ASCENDING.equals(descending) ? nullOrder() : NULLS_LAST;
+  }
+
+
+  /**
+   * @return The expected SQL for a delete statement with a limit and where criterion.
+   */
+  @Override
+  protected String expectedDeleteWithLimitAndWhere(String value) {
+    return "DELETE FROM " + tableName(TEST_TABLE) + " WHERE (Test.stringField = " + stringLiteralPrefix() + value + ") AND ROWNUM <= 1000";
+  }
+
+
+  /**
+   * @return The expected SQL for a delete statement with a limit and where criterion.
+   */
+  @Override
+  protected String expectedDeleteWithLimitAndComplexWhere(String value1, String value2) {
+    return "DELETE FROM " + tableName(TEST_TABLE) + " WHERE ((Test.stringField = " + stringLiteralPrefix() + value1 + ") OR (Test.stringField = " + stringLiteralPrefix() + value2 + ")) AND ROWNUM <= 1000";
+  }
+
+
+  /**
+   * @return The expected SQL for a delete statement with a limit and where criterion.
+   */
+  @Override
+  protected String expectedDeleteWithLimitWithoutWhere() {
+    return "DELETE FROM " + tableName(TEST_TABLE) + " WHERE ROWNUM <= 1000";
   }
 }

@@ -29,6 +29,7 @@ import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.sql.SelectStatement;
 import org.alfasoftware.morf.sql.Statement;
 import org.alfasoftware.morf.sql.element.FieldLiteral;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
@@ -43,7 +44,7 @@ public class SchemaChangeSequence {
 
   private final List<UpgradeStep>            upgradeSteps;
 
-  private final Set<String> tableAdditions = new HashSet<String>();
+  private final Set<String> tableAdditions = new HashSet<>();
 
   private final List<UpgradeStepWithChanges> allChanges     = Lists.newArrayList();
 
@@ -301,6 +302,8 @@ public class SchemaChangeSequence {
 
     /**
      * @see org.alfasoftware.morf.upgrade.SchemaEditor#correctPrimaryKeyColumns(java.lang.String, java.util.List)
+     * @deprecated This change step should never be required, use {@link #changePrimaryKeyColumns(String, List, List)}
+     *  instead. This method will be removed when upgrade steps before 5.2.14 are removed.
      */
     @Override
     @Deprecated
@@ -318,6 +321,15 @@ public class SchemaChangeSequence {
       tableAdditions.add(table.getName());
 
       visitor.visit(new AddTableFrom(table, select));
+    }
+
+
+    /**
+     * @see org.alfasoftware.morf.upgrade.SchemaEditor#analyseTable(org.alfasoftware.morf.metadata.Table)
+     */
+    @Override
+    public void analyseTable(String tableName) {
+      visitor.visit(new AnalyseTable(tableName));
     }
   }
 
@@ -474,6 +486,12 @@ public class SchemaChangeSequence {
     @Override
     public void visit(AddTableFrom addTableFrom) {
       changes.add(addTableFrom);
+    }
+
+
+    @Override
+    public void visit(AnalyseTable analyseTable) {
+      changes.add(analyseTable);
     }
   }
 }

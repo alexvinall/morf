@@ -235,6 +235,12 @@ public class HumanReadableStatementProducer {
       public void addTableFrom(Table table, SelectStatement select) {
         consumer.schemaChange(HumanReadableStatementHelper.generateAddTableFromString(table, select));
       }
+
+      /** @see org.alfasoftware.morf.upgrade.SchemaEditor#analyseTable(org.alfasoftware.morf.metadata.Table) **/
+      @Override
+      public void analyseTable(String tableName) {
+        consumer.schemaChange(HumanReadableStatementHelper.generateAnalyseTableFromString(tableName));
+      }
     };
 
     //Similarly, we need a proxy DataEditor
@@ -289,7 +295,11 @@ public class HumanReadableStatementProducer {
   /**
    * Compare two version strings. This differs from natural ordering
    * as a version of 5.3.27 is higher than 5.3.3.
-   */
+   * @param str1 One version string to compare
+   * @param str2 The other version string to compare
+   * @return a negative integer, zero, or a positive integer as the
+   *         first argument is less than, equal to, or greater than the
+   *         second.   */
   @VisibleForTesting
   protected static Integer versionCompare(String str1, String str2) {
     String[] vals1 = str1.split("\\.");

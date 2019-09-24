@@ -22,8 +22,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.LinkedList;
 import java.util.List;
+import java.util.Optional;
 
 import org.alfasoftware.morf.jdbc.DatabaseType;
 import org.alfasoftware.morf.jdbc.SqlDialect;
@@ -36,7 +36,6 @@ import org.alfasoftware.morf.sql.MergeStatement;
 import org.alfasoftware.morf.sql.element.AliasedField;
 import org.alfasoftware.morf.sql.element.ConcatenatedField;
 import org.alfasoftware.morf.sql.element.Function;
-import org.alfasoftware.morf.sql.element.TableReference;
 import org.alfasoftware.morf.sql.element.WindowFunction;
 import org.apache.commons.lang.StringUtils;
 
@@ -241,28 +240,6 @@ class H2Dialect extends SqlDialect {
   @Override
   protected String getSqlForIsNull(Function function) {
     return "COALESCE(" + getSqlFrom(function.getArguments().get(0)) + ", " + getSqlFrom(function.getArguments().get(1)) + ") ";
-  }
-
-
-  /**
-   * @see org.alfasoftware.morf.jdbc.SqlDialect#buildAutonumberUpdate(org.alfasoftware.morf.sql.element.TableReference, java.lang.String, java.lang.String, java.lang.String, java.lang.String)
-   */
-  @Override
-  public List<String> buildAutonumberUpdate(TableReference dataTable, String fieldName, String idTableName, String nameColumn,
-      String valueColumn) {
-    List<String> sql = new LinkedList<>();
-
-    String existingSelect = getExistingMaxAutoNumberValue(dataTable, fieldName);
-    String tableName = getAutoNumberName(dataTable.getName());
-
-    if (tableName.equals("autonumber")) {
-      return sql;
-    }
-
-    sql.add(String.format("MERGE INTO %s%s (%s, %s) SELECT '%s', (SELECT GREATEST((%s), (SELECT %s from %s WHERE name='%s'), 1))",
-      schemaNamePrefix(), idTableName, nameColumn, valueColumn, tableName, existingSelect, valueColumn, idTableName, tableName));
-
-    return sql;
   }
 
 
@@ -685,5 +662,23 @@ class H2Dialect extends SqlDialect {
   @Override
   protected String getSqlForLastDayOfMonth(AliasedField date) {
     return "DATEADD(dd, -DAY(DATEADD(m,1," + getSqlFrom(date) + ")), DATEADD(m,1," + getSqlFrom(date) + "))";
+  }
+
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.SqlDialect.getSqlForAnalyseTable(Table)
+   */
+  @Override
+  public Collection<String> getSqlForAnalyseTable(Table table) {
+    return SqlDialect.NO_STATEMENTS;
+  }
+
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.SqlDialect.getDeleteLimitSuffixSql(int)
+   */
+  @Override
+  protected Optional<String> getDeleteLimitSuffix(int limit) {
+    return Optional.of("LIMIT " + limit);
   }
 }

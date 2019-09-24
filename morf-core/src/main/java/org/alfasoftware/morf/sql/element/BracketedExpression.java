@@ -32,6 +32,12 @@ public class BracketedExpression extends AliasedField implements Driver {
   private final MathsField innerExpression;
 
 
+  @Override
+  public BracketedExpression as(String aliasName) {
+    return (BracketedExpression) super.as(aliasName);
+  }
+
+
   /**
    * @param innerExpression expression to be wrapped with a bracket.
    */
@@ -41,37 +47,68 @@ public class BracketedExpression extends AliasedField implements Driver {
   }
 
 
+  private BracketedExpression(final String alias, MathsField innerExpression) {
+    super(alias);
+    this.innerExpression = innerExpression;
+  }
+
+
   /**
-   * @see {@link #innerExpression}
+   * @see #innerExpression
+   * @return The inner expression
    */
   public MathsField getInnerExpression() {
     return innerExpression;
   }
 
 
-  /**
-   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal()
-   */
   @Override
-  protected AliasedField deepCopyInternal(DeepCopyTransformation transformer) {
-    return new BracketedExpression((MathsField) transformer.deepCopy(innerExpression));
+  protected BracketedExpression deepCopyInternal(DeepCopyTransformation transformer) {
+    return new BracketedExpression(this.getAlias(), (MathsField) transformer.deepCopy(innerExpression));
   }
 
 
-  /**
-   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(org.alfasoftware.morf.sql.ObjectTreeTraverser.VisitorDispatcher)
-   */
+  @Override
+  protected BracketedExpression shallowCopy(String aliasName) {
+    return new BracketedExpression(aliasName, innerExpression);
+  }
+
+
   @Override
   public void drive(ObjectTreeTraverser traverser) {
     traverser.dispatch(getInnerExpression());
   }
 
 
-  /**
-   * @see java.lang.Object#toString()
-   */
   @Override
   public String toString() {
     return "(" + innerExpression + ")" + super.toString();
+  }
+
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((innerExpression == null) ? 0 : innerExpression.hashCode());
+    return result;
+  }
+
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj)
+      return true;
+    if (!super.equals(obj))
+      return false;
+    if (getClass() != obj.getClass())
+      return false;
+    BracketedExpression other = (BracketedExpression) obj;
+    if (innerExpression == null) {
+      if (other.innerExpression != null)
+        return false;
+    } else if (!innerExpression.equals(other.innerExpression))
+      return false;
+    return true;
   }
 }

@@ -19,7 +19,6 @@ import static org.alfasoftware.morf.sql.SqlUtils.bracket;
 import static org.alfasoftware.morf.sql.SqlUtils.caseStatement;
 import static org.alfasoftware.morf.sql.SqlUtils.cast;
 import static org.alfasoftware.morf.sql.SqlUtils.concat;
-import static org.alfasoftware.morf.sql.SqlUtils.delete;
 import static org.alfasoftware.morf.sql.SqlUtils.field;
 import static org.alfasoftware.morf.sql.SqlUtils.insert;
 import static org.alfasoftware.morf.sql.SqlUtils.literal;
@@ -40,6 +39,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+
+import java.util.Optional;
 
 import org.alfasoftware.morf.sql.element.AliasedField;
 import org.alfasoftware.morf.sql.element.Criterion;
@@ -304,7 +305,7 @@ public class TestObjectTreeTraverserWithSqlElementVisitor {
    */
   @Test
   public void testMerge() {
-    final SelectStatement select = select(literal(1), literal(1)).from(two);
+    final SelectStatement select = select(literal(1), literal(2)).from(two);
     final MergeStatement merge = merge().into(three).from(select);
 
     traverser.dispatch(merge);
@@ -327,7 +328,8 @@ public class TestObjectTreeTraverserWithSqlElementVisitor {
     final SelectStatement select = select().from(two);
     final Criterion crit2 = exists(select);
     final Criterion crit1 = not(crit2);
-    final DeleteStatement delete = delete(three).where(crit1);
+    int limit = 1000;
+    final DeleteStatement delete = DeleteStatement.delete(three).where(crit1).limit(limit).build();
 
     traverser.dispatch(delete);
 
@@ -337,6 +339,7 @@ public class TestObjectTreeTraverserWithSqlElementVisitor {
     verify(callback).visit(select);
     verify(callback).visit(two);
     verify(callback).visit(three);
+    verify(callback).visit(Optional.of(limit));
     verifyNoMoreInteractions(callback);
   }
 
@@ -397,7 +400,7 @@ public class TestObjectTreeTraverserWithSqlElementVisitor {
   @Test
   public void testInsertFromFieldsAndValues() {
     final SelectStatement select1 = select(literal(1)).from(two);
-    final SelectStatement select2 = select(literal(1)).from(four);
+    final SelectStatement select2 = select(literal(2)).from(four);
 
     final FieldFromSelect select1AsField = (FieldFromSelect) select1.asField().as("a");
     final FieldFromSelect select2AsField = (FieldFromSelect) select2.asField().as("b");
@@ -432,7 +435,7 @@ public class TestObjectTreeTraverserWithSqlElementVisitor {
   @Test
   public void testInsertFromFields() {
     final SelectStatement select1 = select(literal(1)).from(two);
-    final SelectStatement select2 = select(literal(1)).from(four);
+    final SelectStatement select2 = select(literal(2)).from(four);
 
     final FieldFromSelect select1AsField = (FieldFromSelect) select1.asField().as("a");
     final FieldFromSelect select2AsField = (FieldFromSelect) select2.asField().as("b");

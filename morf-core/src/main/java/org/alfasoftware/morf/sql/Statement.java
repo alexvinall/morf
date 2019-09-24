@@ -21,13 +21,6 @@ import org.alfasoftware.morf.util.DeepCopyTransformation;
  * This is an interface for handling SQL statements. This
  * is used as a common base for all SQL statements.
  *
- * <h3>SelectStatement</h3>
- *
- * <blockquote><pre>
- *   SelectStatement stmt = new SelectStatement().from(new Table("agreement"));</pre></blockquote>
- *
- * @see SelectStatement
- *
  * @author Copyright (c) Alfa Financial Software 2009
  */
 public interface Statement {
@@ -37,7 +30,7 @@ public interface Statement {
    * Create a deep copy for this statement
    *
    * @return a deep copy of this statement
-   * Deprecated use deepCopy({@link DeepCopyTransformation}) which returns a builder.
+   * @deprecated use deepCopy({@link DeepCopyTransformation}) which returns a builder.
    */
   @Deprecated
   public Statement deepCopy();

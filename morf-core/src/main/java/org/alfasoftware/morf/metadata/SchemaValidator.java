@@ -21,7 +21,6 @@ import static org.alfasoftware.morf.metadata.SchemaUtils.index;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -33,7 +32,6 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.alfasoftware.morf.sql.element.AliasedField;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ObjectUtils;
 
 import com.google.common.base.Function;
@@ -45,6 +43,7 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
+import com.google.common.io.CharStreams;
 
 /**
  * Class that validates {@link Schema} objects meet the rules.
@@ -54,15 +53,15 @@ import com.google.common.collect.Sets;
  *
  * <p>Usage: create a new instance of this class and call {@link #validate(Schema)}.</p>
  *
- * <p>The current database rules are:
+ * <p>The current database rules are:</p>
  * <ul>
- * <li>An object (table, column, index) name must not be > 30 characters long (an Oracle restriction)</li>
+ * <li>An object (table, column, index) name must not be &gt; 30 characters long (an Oracle restriction)</li>
  * <li>An object name must not be an SQL reserved word</li>
  * <li>Table, column and index names must match [a-zA-Z][a-zA-Z0-9_]* (any letters or numbers or underscores, but must start with a letter)</li>
  * <li>Indexes may not be simply by 'id'. This would duplicate the primary key and is superfluous.</li>
  * <li>No duplicated indexes are allowed.</li>
  * </ul>
- * </p>
+ *
  *
  * @author Copyright (c) Alfa Financial Software 2010
  */
@@ -93,26 +92,26 @@ public class SchemaValidator {
   private static final Supplier<Set<String>> sqlReservedWords = Suppliers.memoize(new Supplier<Set<String>>() {
     @Override
     public Set<String> get() {
-      StringWriter writer = new StringWriter();
       try {
         try (InputStream inputStream = getClass().getResourceAsStream("SQL_RESERVED_WORDS.txt")) {
           if (inputStream == null) {
             throw new RuntimeException("Could not find resource: [SQL_RESERVED_WORDS.txt] near [" + getClass() + "]");
           }
-          IOUtils.copy(new InputStreamReader(inputStream, "UTF-8"), writer);
-          HashSet<String> sqlReservedWords = Sets.newHashSet(Splitter.on("\r\n").split(writer.toString()));
+          try (InputStreamReader streamReader = new InputStreamReader(inputStream, "UTF-8")) {
+            HashSet<String> sqlReservedWords = Sets.newHashSet(Splitter.on("\r\n").split(CharStreams.toString(streamReader)));
 
-          // temporary removal of words we currently have to allow
-          sqlReservedWords.remove("TYPE");  // DB2
-          sqlReservedWords.remove("OPERATION"); // DB2, SQL Server "future", PostGres
-          sqlReservedWords.remove("METHOD"); // PostGres
-          sqlReservedWords.remove("LANGUAGE"); // DB2, ODBC (?), SQL Server "future", PostGres
-          sqlReservedWords.remove("LOCATION"); // PostGres
-          sqlReservedWords.remove("YEAR"); // DB2, ODBC (?), SQL Server "future", PostGres
-          sqlReservedWords.remove("DAY"); // DB2, ODBC (?), SQL Server "future", PostGres
-          sqlReservedWords.remove("SECURITY"); // DB2, PostGres
+            // temporary removal of words we currently have to allow
+            sqlReservedWords.remove("TYPE");  // DB2
+            sqlReservedWords.remove("OPERATION"); // DB2, SQL Server "future", PostGres
+            sqlReservedWords.remove("METHOD"); // PostGres
+            sqlReservedWords.remove("LANGUAGE"); // DB2, ODBC (?), SQL Server "future", PostGres
+            sqlReservedWords.remove("LOCATION"); // PostGres
+            sqlReservedWords.remove("YEAR"); // DB2, ODBC (?), SQL Server "future", PostGres
+            sqlReservedWords.remove("DAY"); // DB2, ODBC (?), SQL Server "future", PostGres
+            sqlReservedWords.remove("SECURITY"); // DB2, PostGres
 
-          return ImmutableSet.copyOf(sqlReservedWords);
+            return ImmutableSet.copyOf(sqlReservedWords);
+          }
         }
       } catch (IOException e) {
         throw new RuntimeException("Failed to load [SQL_RESERVED_WORDS.txt]", e);
@@ -177,9 +176,9 @@ public class SchemaValidator {
 
 
   /**
-   * Validate a {@link Table} meets the rules
+   * Validate a {@link View} meets the rules
    *
-   * @param table The {@link Table} to validate
+   * @param view The {@link View} to validate
    */
   public void validate(View view) {
     validateView(view);

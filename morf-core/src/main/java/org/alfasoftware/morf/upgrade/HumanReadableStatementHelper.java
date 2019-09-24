@@ -19,10 +19,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.SystemUtils;
-import org.apache.commons.lang.math.NumberUtils;
-
 import org.alfasoftware.morf.metadata.Column;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Index;
@@ -50,10 +46,13 @@ import org.alfasoftware.morf.sql.element.Function;
 import org.alfasoftware.morf.sql.element.FunctionType;
 import org.alfasoftware.morf.sql.element.Join;
 import org.alfasoftware.morf.sql.element.MathsField;
-import org.alfasoftware.morf.sql.element.NullFieldLiteral;
 import org.alfasoftware.morf.sql.element.Operator;
 import org.alfasoftware.morf.sql.element.TableReference;
 import org.alfasoftware.morf.sql.element.WhenCondition;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.SystemUtils;
+import org.apache.commons.lang.math.NumberUtils;
+
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
@@ -118,6 +117,7 @@ class HumanReadableStatementHelper {
       .put(FunctionType.LEFT_PAD, new FunctionTypeMetaData("leftPad(", ")", ", ", false, false))
       .put(FunctionType.LEFT_TRIM, new FunctionTypeMetaData("left trimmed ", "", "", false, false))
       .put(FunctionType.LENGTH, new FunctionTypeMetaData("length of ", "", "", false, false))
+      .put(FunctionType.BLOB_LENGTH, new FunctionTypeMetaData("length of blob ", "", "", false, false))
       .put(FunctionType.LOWER, new FunctionTypeMetaData("lower case ", "", "", false, false))
       .put(FunctionType.MAX, new FunctionTypeMetaData("highest ", "", "", false, false))
       .put(FunctionType.MIN, new FunctionTypeMetaData("lowest ", "", "", false, false))
@@ -362,6 +362,16 @@ class HumanReadableStatementHelper {
 
     return addTableBuilder
             .toString();
+  }
+
+
+  /**
+   * Generates human-readable "Analyse Table" string.
+   *
+   * @param The table to analyse.
+   */
+  public static String generateAnalyseTableFromString(String tableName) {
+    return String.format("Analyse table %s", tableName);
   }
 
 
@@ -960,7 +970,7 @@ class HumanReadableStatementHelper {
       if (comma) {
         sb.append(", ");
       } else {
-        comma = false;
+        comma = true;
         if (sb.length() > 0) {
           sb.append(' ');
         }
@@ -1041,9 +1051,7 @@ class HumanReadableStatementHelper {
    * @return a string containing the literal value.
    */
   private static String generateFieldValueString(final AliasedField field) {
-    if (field instanceof NullFieldLiteral) {
-      return "null";
-    } else if (field instanceof CaseStatement) {
+    if (field instanceof CaseStatement) {
       final StringBuilder sb = new StringBuilder("(");
       for (WhenCondition when : ((CaseStatement)field).getWhenConditions()) {
         if (sb.length() > 1) {

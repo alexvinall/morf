@@ -20,6 +20,8 @@ import java.math.BigDecimal;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.sql.Statement;
 import org.alfasoftware.morf.util.DeepCopyTransformation;
+import org.apache.commons.lang.builder.EqualsBuilder;
+import org.apache.commons.lang.builder.HashCodeBuilder;
 import org.joda.time.LocalDate;
 
 
@@ -42,15 +44,16 @@ public class FieldLiteral extends AliasedField {
 
 
   /**
-   * Constructor used to create the deep copy of this field literal
+   * TODO make private when {@link NullFieldLiteral} is removed
    *
-   * @param sourceField the field literal to create the copy from
+   * @param alias The alias.
+   * @param value The value.
+   * @param dataType The data type.
    */
-  private FieldLiteral(FieldLiteral sourceField) {
-    super();
-
-    this.value = sourceField.value;
-    this.dataType = sourceField.dataType;
+  protected FieldLiteral(final String alias, final String value, final DataType dataType) {
+    super(alias);
+    this.value = value;
+    this.dataType = dataType;
   }
 
 
@@ -158,10 +161,9 @@ public class FieldLiteral extends AliasedField {
 
 
   /**
-   * Constructs a new {@linkplain FieldLiteral} with a Null source.
-   *
+   * Constructs a new {@linkplain FieldLiteral} representing NULL.
    */
-  protected FieldLiteral() {
+  public FieldLiteral() {
     super();
 
     this.value = null;
@@ -226,12 +228,17 @@ public class FieldLiteral extends AliasedField {
 
 
   /**
-   * {@inheritDoc}
-   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal()
+   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal(DeepCopyTransformation)
    */
   @Override
-  protected AliasedField deepCopyInternal(DeepCopyTransformation transformer) {
-    return new FieldLiteral(this);
+  protected FieldLiteral deepCopyInternal(final DeepCopyTransformation transformer) {
+    return new FieldLiteral(this.getAlias(), this.value, this.dataType);
+  }
+
+
+  @Override
+  protected AliasedField shallowCopy(String aliasName) {
+    return new FieldLiteral(aliasName, this.value, this.dataType);
   }
 
 
@@ -240,8 +247,40 @@ public class FieldLiteral extends AliasedField {
    */
   @Override
   public FieldLiteral as(String aliasName) {
-    super.as(aliasName);
-    return this;
+    return (FieldLiteral) super.as(aliasName);
+  }
+
+
+  /**
+   * @see java.lang.Object#equals(java.lang.Object)
+   */
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj)
+      return true;
+    if (obj == null)
+      return false;
+    if (getClass() != obj.getClass())
+      return false;
+    FieldLiteral other = (FieldLiteral) obj;
+    return new EqualsBuilder()
+        .appendSuper(super.equals(obj))
+        .append(this.value, other.value)
+        .append(this.dataType, other.dataType)
+        .isEquals();
+  }
+
+
+  /**
+   * @see java.lang.Object#hashCode()
+   */
+  @Override
+  public int hashCode() {
+    return new HashCodeBuilder()
+        .appendSuper(super.hashCode())
+        .append(this.value)
+        .append(this.dataType)
+        .toHashCode();
   }
 
 
@@ -250,6 +289,8 @@ public class FieldLiteral extends AliasedField {
    */
   @Override
   public String toString() {
-    return dataType.equals(DataType.STRING) ? "\"" + value + "\"" : value;
+    return (dataType.equals(DataType.STRING)
+        ? "\"" + value + "\""
+        : value == null ? "NULL" : value) + super.toString();
   }
 }

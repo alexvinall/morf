@@ -22,6 +22,7 @@ import static org.alfasoftware.morf.upgrade.db.DatabaseUpgradeTableContribution.
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
@@ -35,13 +36,28 @@ import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.metadata.View;
 import org.alfasoftware.morf.sql.InsertStatement;
 import org.alfasoftware.morf.upgrade.UpgradePath.UpgradePathFactory;
+import org.alfasoftware.morf.upgrade.UpgradePath.UpgradePathFactoryImpl;
+import org.alfasoftware.morf.upgrade.additions.UpgradeScriptAddition;
 
 import com.google.inject.ImplementedBy;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
 /**
- * Deploys a full database schema.
+ * Deploys a full database schema. Once the deployment is complete, the status of
+ * the system will be left in {@link UpgradeStatus#DATA_TRANSFER_REQUIRED}. It is the
+ * responsibility of the application to transfer appropriate data into the database
+ * at this point and, once complete, call {@link UpgradeStatusTableService#writeStatusFromStatus(UpgradeStatus, UpgradeStatus)}.
+ *
+ * <h3>Usage</h3>
+ * <pre><code>
+ * deployment.deploy(targetSchema);
+ * if (upgradeStatusTableService.writeStatusFromStatus(DATA_TRANSFER_REQUIRED, DATA_TRANSFER_IN_PROGRESS) == 1) {
+ *   // Use DatabaseDataSetConsumer etc to populate the database
+ *   upgradeStatus.writeStatusFromStatus(DATA_TRANSFER_IN_PROGRESS, COMPLETE);
+ * }
+ * // Normal start up
+ * </code></pre>
  *
  * @author Copyright (c) Alfa Financial Software 2010
  */
@@ -59,11 +75,8 @@ public class Deployment {
 
   private final UpgradePathFactory upgradePathFactory;
 
-
   /**
    * Constructor.
-   *
-   * @param sqlScriptExecutorProvider a provider of {@link SqlScriptExecutor}s.
    */
   @Inject
   Deployment(SqlDialect sqlDialect, SqlScriptExecutorProvider sqlScriptExecutorProvider, UpgradePathFactory upgradePathFactory) {
@@ -89,7 +102,6 @@ public class Deployment {
    * Creates deployment statements using the supplied source meta data.
    *
    * @param targetSchema Schema that is to be deployed.
-   * @param sqlDialect Used to create deployment SQL statements.
    * @param sqlStatementWriter Recipient for the deployment statements.
    */
   private void writeStatements(Schema targetSchema, SqlStatementWriter sqlStatementWriter) {
@@ -135,13 +147,34 @@ public class Deployment {
   /**
    * Creates deployment statements using the supplied source meta data.
    *
-   * @param dialect Database sql dialect.
    * @param upgradeSteps All available upgrade steps.
    * @param targetSchema Schema that is to be deployed.
    */
   public void deploy(Schema targetSchema, Collection<Class<? extends UpgradeStep>> upgradeSteps) {
     UpgradePath path = getPath(targetSchema, upgradeSteps);
     sqlScriptExecutorProvider.get().execute(path.getSql());
+  }
+
+
+  /**
+   * Static convenience method which deploys the specified database schema, prepopulating
+   * the upgrade step table with all pre-existing upgrade information.
+   *
+   * @param targetSchema The target database schema.
+   * @param upgradeSteps All upgrade steps which should be deemed to have already run.
+   * @param connectionResources Connection details for the database.
+   */
+  public static void deploySchema(Schema targetSchema, Collection<Class<? extends UpgradeStep>> upgradeSteps, ConnectionResources connectionResources) {
+    UpgradeStatusTableServiceImpl upgradeStatusTableService = new UpgradeStatusTableServiceImpl(
+      new SqlScriptExecutorProvider(connectionResources), connectionResources.sqlDialect());
+    try {
+      new Deployment(
+        new UpgradePathFactoryImpl(Collections.<UpgradeScriptAddition>emptySet(), upgradeStatusTableService),
+        connectionResources
+      ).deploy(targetSchema, upgradeSteps);
+    } finally {
+      upgradeStatusTableService.tidyUp(connectionResources.getDataSource());
+    }
   }
 
 
@@ -159,7 +192,6 @@ public class Deployment {
     final UpgradePath path = upgradePathFactory.create(sqlDialect);
     writeStatements(targetSchema, path);
     writeUpgradeSteps(upgradeSteps, path);
-
     return path;
   }
 
@@ -168,12 +200,11 @@ public class Deployment {
    * Add an upgrade step for each upgrade step.
    *
    * <p>The {@link Deployment} class ensures that all contributed domain tables are written in the database, but we need to
-   * ensure that the upgrade steps that were used to create are in written so that next time the application is run the upgrader
+   * ensure that the upgrade steps that were used to create are in written so that next time the application is run the upgrade
    * doesn't try to recreate/upgrade them.</p>
    *
-   * @param sqlDialect Database sql dialect.
    * @param upgradeSteps All available upgrade steps.
-   * @param sqlStatementWriter Recipient for the deployment statements.
+   * @param upgradePath Recipient for the deployment statements.
    */
   private void writeUpgradeSteps(Collection<Class<? extends UpgradeStep>> upgradeSteps, UpgradePath upgradePath) {
     for(Class<? extends UpgradeStep> upgradeStep : upgradeSteps) {
@@ -195,7 +226,7 @@ public class Deployment {
     /**
      * Creates an instance of {@link Deployment}.
      *
-     * @param sqlScriptExecutorProvider Provides {@link SqlScriptExecutor}s.
+     * @param connectionResources The connection to use.
      * @return The resulting deployment.
      */
     public Deployment create(ConnectionResources connectionResources);

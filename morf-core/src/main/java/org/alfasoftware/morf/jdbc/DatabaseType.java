@@ -17,6 +17,7 @@ package org.alfasoftware.morf.jdbc;
 
 import java.sql.Connection;
 import java.util.List;
+import java.util.Optional;
 import java.util.ServiceLoader;
 
 import javax.sql.XADataSource;
@@ -26,11 +27,12 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import com.google.common.base.Function;
-import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+
+
 
 /**
  * Encapsulates a supported database type.
@@ -64,7 +66,7 @@ public interface DatabaseType {
 
   /**
    * If the JDBC URL matches the database type, extracts the elements of the URL.
-   * Otherwise returns absent to indicate that the URL is not understood by this
+   * Otherwise returns empty to indicate that the URL is not understood by this
    * database type.
    *
    * <p>This is the inverse of {@link #formatJdbcUrl(JdbcUrlElements)}, so:</p>
@@ -75,7 +77,7 @@ public interface DatabaseType {
    *
    * @param url The JDBC URL.
    * @return The {@link JdbcUrlElements}, if the URL matches the database type,
-   * otherwise absent.
+   * otherwise empty.
    */
   public Optional<JdbcUrlElements> extractJdbcUrl(String url);
 
@@ -90,6 +92,9 @@ public interface DatabaseType {
 
 
   /**
+   * @param jdbcUrl The JDBC URL
+   * @param username The user name
+   * @param password  The password
    * @return {@link XADataSource} implementation specific for this {@link DatabaseType}
    */
   public XADataSource getXADataSource(String jdbcUrl, String username, String password);
@@ -121,11 +126,24 @@ public interface DatabaseType {
   /**
    * Returns true if the JDBC product description corresponds to this database type.
    *
-   * @param productDescription The JDBC product description
+   * @param product The JDBC product description
    * @return true if the JDBC product description corresponds to this database type.
-   * @see DatabaseMetaData#getDatabaseProductName()
+   * @see java.sql.DatabaseMetaData#getDatabaseProductName()
    */
   public boolean matchesProduct(String product);
+
+
+  /**
+   * Reclassifies driver-specific exceptions to standard driver agnostic exceptions, such as those
+   * extending {@link java.sql.SQLException}. This can allow callers to extract error codes from
+   * exceptions which are otherwise opaque.
+   *
+   * @param e the exception to reclassify.
+   * @return The original exception or a reclassified exception.
+   */
+  public default Exception reclassifyException(Exception e) {
+    return e;
+  }
 
 
   /**
@@ -176,7 +194,7 @@ public interface DatabaseType {
      * Returns the first available database type matching the JDBC product
      * name.
      *
-     * <p>Returns absent if no matching database type is found. If there are
+     * <p>Returns empty if no matching database type is found. If there are
      * multiple matches for the product name, {@link IllegalStateException}
      * will be thrown.</p>
      *
@@ -195,7 +213,7 @@ public interface DatabaseType {
           return input.matchesProduct(product);
         }
       }).toList();
-      if (result.isEmpty()) return Optional.absent();
+      if (result.isEmpty()) return Optional.empty();
       if (result.size() > 1) throw new IllegalArgumentException("Database product name [" + product + "] matches "
           + "more than one registered database type " + result);
       return Optional.of(result.get(0));

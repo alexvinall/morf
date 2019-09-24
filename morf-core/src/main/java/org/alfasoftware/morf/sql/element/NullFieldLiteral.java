@@ -15,9 +15,9 @@
 
 package org.alfasoftware.morf.sql.element;
 
+import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.sql.Statement;
 import org.alfasoftware.morf.util.DeepCopyTransformation;
-import org.apache.commons.lang.StringUtils;
 
 /**
  * Provides a representation of a null literal field value to be used in a {@link Statement}.
@@ -26,18 +26,20 @@ import org.apache.commons.lang.StringUtils;
  */
 public class NullFieldLiteral extends FieldLiteral {
 
-  /**
-   * {@inheritDoc}
-   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal()
-   */
-  @Override
-  protected AliasedField deepCopyInternal(DeepCopyTransformation transformer) {
-    return new NullFieldLiteral();
+  public NullFieldLiteral() {
+    super();
   }
 
 
+  NullFieldLiteral(String alias) {
+    super(alias, null, DataType.NULL);
+  }
+
+  /**
+   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal(DeepCopyTransformation)
+   */
   @Override
-  public String toString() {
-    return "NULL" + (StringUtils.isEmpty(getAlias()) ? "" : " AS " + getAlias());
+  protected NullFieldLiteral deepCopyInternal(final DeepCopyTransformation transformer) {
+    return new NullFieldLiteral(this.getAlias());
   }
 }

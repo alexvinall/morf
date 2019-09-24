@@ -16,6 +16,7 @@
 package org.alfasoftware.morf.testing;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -86,6 +87,9 @@ public class DatabaseSchemaManager {
 
   /**
    * Injected constructor.
+   * @param connectionResources The connection to use
+   * @param dataSource The data source
+   * @param executor The script executor
    */
   @Inject
   protected DatabaseSchemaManager(ConnectionResources connectionResources, DataSource dataSource, SqlScriptExecutorProvider executor) {
@@ -134,6 +138,11 @@ public class DatabaseSchemaManager {
       for (View view : changes.getViewsToDrop()) {
         sql.addAll(dropViewIfExists(view));
       }
+
+      for (View view : changes.getViewsToDeploy()) {
+        sql.addAll(dropTableIfPresent(producerCache, view.getName()));
+      }
+
       sql.addAll(ensureTablesExist(schema, truncationBehavior, producerCache));
 
       for (View view: changes.getViewsToDeploy()) {
@@ -210,7 +219,7 @@ public class DatabaseSchemaManager {
   /**
    * Invalidate the cache of database tables. Use when the schema has changed underneath this schema manager.
    */
-  public void invalidateCache() {
+  public final void invalidateCache() {
     if (log.isDebugEnabled()) {
       StackTraceElement stack = new Throwable().getStackTrace()[1];
       log.debug("Cache invalidated at " + stack.getClassName() + "." + stack.getMethodName() + ":" + stack.getLineNumber());
@@ -225,6 +234,15 @@ public class DatabaseSchemaManager {
     tablesNotNeedingTruncate.clear();
     tablesLoaded = false;
     viewsLoaded = false;
+  }
+
+
+  /**
+   * Drop the specified tables from the schema if they are present.
+   */
+  public Collection<String> dropTableIfPresent(ProducerCache producerCache, String tableName) {
+    Table table = getTable(producerCache, tableName);
+    return table == null ? Collections.emptySet() : dropTable(table);
   }
 
 
@@ -331,6 +349,10 @@ public class DatabaseSchemaManager {
         log.debug(message);
       }
     };
+
+    if (requiredTable.getName().length() > 27) {
+      log.warn("Required table name [" + requiredTable.getName() + "] is [" + requiredTable.getName().length() + "] characters long!");
+    }
 
     // if we have an existing table, check it's identical
     Table existingTable = getTable(producerCache, requiredTable.getName());

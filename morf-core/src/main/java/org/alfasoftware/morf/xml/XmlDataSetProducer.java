@@ -18,21 +18,23 @@ package org.alfasoftware.morf.xml;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.Reader;
 import java.io.UnsupportedEncodingException;
-import java.net.Authenticator;
 import java.net.JarURLConnection;
 import java.net.MalformedURLException;
-import java.net.PasswordAuthentication;
 import java.net.URL;
+import java.net.URLConnection;
 import java.net.URLDecoder;
 import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -42,24 +44,21 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.jar.JarInputStream;
 import java.util.zip.ZipEntry;
 
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
-
-import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang.StringUtils;
-import org.xmlpull.mxp1.MXParser;
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
+import javax.xml.stream.FactoryConfigurationError;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 import org.alfasoftware.morf.dataset.DataSetProducer;
 import org.alfasoftware.morf.dataset.Record;
 import org.alfasoftware.morf.metadata.Column;
+import org.alfasoftware.morf.metadata.DataSetUtils;
+import org.alfasoftware.morf.metadata.DataSetUtils.RecordBuilder;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Index;
 import org.alfasoftware.morf.metadata.Schema;
@@ -67,7 +66,14 @@ import org.alfasoftware.morf.metadata.SchemaUtils;
 import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.metadata.View;
 import org.alfasoftware.morf.xml.XmlStreamProvider.XmlInputStreamProvider;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import com.google.common.base.Charsets;
+import com.google.common.io.ByteStreams;
 import com.google.common.io.CharSource;
+import com.google.common.io.Closeables;
 import com.google.common.io.Files;
 
 /**
@@ -75,6 +81,7 @@ import com.google.common.io.Files;
  * XML efficiently.
  */
 public class XmlDataSetProducer implements DataSetProducer {
+  private static final Log log = LogFactory.getLog(XmlDataSetProducer.class);
 
   /**
    * Source of streams from which to read XMl.
@@ -155,12 +162,14 @@ public class XmlDataSetProducer implements DataSetProducer {
    */
   @Override
   public void close() {
+    xmlStreamProvider.close();
     for (File file : tempFiles) {
-      if (!file.delete()) {
-        throw new RuntimeException("Could not delete file [" + file.getPath() + "]");
+      try {
+        java.nio.file.Files.delete(file.toPath());
+      } catch (Exception e) {
+        throw new RuntimeException("Could not delete file [" + file.getPath() + "]", e);
       }
     }
-    xmlStreamProvider.close();
   }
 
 
@@ -175,9 +184,9 @@ public class XmlDataSetProducer implements DataSetProducer {
       public Iterator<Record> iterator() {
         final InputStream inputStream = xmlStreamProvider.openInputStreamForTable(tableName);
 
-        final XmlPullParser pullParser = openPullParser(inputStream);
+        XMLStreamReader xmlStreamReader = openPullParser(inputStream);
 
-        return new PullProcessorRecordIterator(pullParser) {
+        return new PullProcessorRecordIterator(xmlStreamReader) {
           @Override
           public boolean hasNext() {
             boolean result = super.hasNext();
@@ -206,11 +215,11 @@ public class XmlDataSetProducer implements DataSetProducer {
     final InputStream inputStream = xmlStreamProvider.openInputStreamForTable(tableName);
 
     try {
-      final XmlPullParser pullParser = openPullParser(inputStream);
+      final XMLStreamReader pullParser = openPullParser(inputStream);
       PullProcessorRecordIterator pullProcessorRecordIterator = new PullProcessorRecordIterator(pullParser);
       return !pullProcessorRecordIterator.hasNext();
     } finally {
-      IOUtils.closeQuietly(inputStream);
+      Closeables.closeQuietly(inputStream);
     }
   }
 
@@ -234,14 +243,24 @@ public class XmlDataSetProducer implements DataSetProducer {
    * @param inputStream The inputstream to read from
    * @return A new pull parser
    */
-  private static XmlPullParser openPullParser(InputStream inputStream) {
+  private static XMLStreamReader openPullParser(InputStream inputStream) {
     try {
-      XmlPullParser xmlPullParser = new MXParser();
-      xmlPullParser.setInput(inputStream, "UTF-8");
-      return xmlPullParser;
+      BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(inputStream, Charsets.UTF_8));
+      Reader reader;
+      int version = Version2to4TransformingReader.readVersion(bufferedReader);
 
-    } catch (XmlPullParserException e) {
-      throw new RuntimeException("Error creating pull parser", e);
+      if (version == 2 || version == 3) {
+        reader = new Version2to4TransformingReader(bufferedReader, version);
+      } else {
+        reader = bufferedReader;
+      }
+
+      if (version > 4) {
+        throw new IllegalStateException("Unknown XML dataset format: "+version +"  This dataset has been produced by a later version of Morf");
+      }
+      return XMLInputFactory.newFactory().createXMLStreamReader(reader);
+    } catch (XMLStreamException|FactoryConfigurationError e) {
+      throw new RuntimeException(e);
     }
   }
 
@@ -285,7 +304,7 @@ public class XmlDataSetProducer implements DataSetProducer {
               throw new IllegalStateException("Unable to transform [" + result + "] into a temporary directory");
             }
 
-            JarInputStream input = new JarInputStream(jar.getJarFileURL().openStream());
+            try (JarInputStream input = new JarInputStream(jar.getJarFileURL().openStream())) {
             String prefix = jar.getJarEntry().getName();
             ZipEntry entry = null;
             while ((entry = input.getNextEntry()) != null) { // NOPMD
@@ -294,23 +313,17 @@ public class XmlDataSetProducer implements DataSetProducer {
                 if (!target.getParentFile().exists() && !target.getParentFile().mkdirs()) {
                   throw new RuntimeException("Could not make directories [" + target.getParentFile() + "]");
                 }
-                OutputStream output = new BufferedOutputStream(new FileOutputStream(target));
-                try {
-                  IOUtils.copy(input, output);
-                } finally {
-                  output.close();
+                  try (OutputStream output = new BufferedOutputStream(new FileOutputStream(target))) {
+                  ByteStreams.copy(input, output);
                 }
               }
             }
+            }
 
           } else {
-            InputStream input = url.openStream();
-            OutputStream output = new BufferedOutputStream(new FileOutputStream(result));
-            try {
-              IOUtils.copy(input, output);
-            } finally {
-              output.close();
-              input.close();
+            try (InputStream input = url.openStream();
+                 OutputStream output = new BufferedOutputStream(new FileOutputStream(result))) {
+              ByteStreams.copy(input, output);
             }
           }
         } catch (IOException e) {
@@ -321,80 +334,68 @@ public class XmlDataSetProducer implements DataSetProducer {
       }
 
     } else if (url.getProtocol().equals("https") || url.getProtocol().equals("http")) {
-      // This is an incomplete implementation for handling http(s) urls. It is only setup to work for url start positions in a directory style setup.
-
       if (url.getPath().endsWith(".zip")) {
-        throw new RuntimeException("Currently unable to download zip files over http URL. Please Download the file and point the app to your local copy.");
-      }
+        File dataSet = createTempFile("dataset", ".tmp");
+        downloadFileFromHttpUrl(url, urlUsername, urlPassword, dataSet);
+        tempFiles.add(dataSet);
+        log.info("Successfully downloaded zipped data set [" + url + "] to temp file [" + dataSet + "]");
+        return dataSet;
+      } else {
+        // -- This is an experimental attempt to traverse the file directory and source the relevant XML files. YMMV.
+        //
+        // Create a temp file which will hold the xml files in the data set
+        File directoryFile = createTempFile("urlDirectory", ".tmp");
 
-      // Create a temp file which will hold the xml files in the start position
-      File directoryFile;
-      try {
-        directoryFile = File.createTempFile("urlDirectory", ".tmp");
-      } catch (IOException e) {
-        throw new RuntimeException("Unable to create temp url directory file", e);
-      }
+        // populate file from url
+        downloadFileFromHttpUrl(url, urlUsername, urlPassword, directoryFile);
 
-      // populate file from url
-      downloadFileFromHttpUrl(url, urlUsername, urlPassword, directoryFile);
-
-      // We will now have the directory file with all the links of the xml files so get a list of all the xml files
-      ArrayList<String> xmlFiles = new ArrayList<>();
-      CharSource source = Files.asCharSource(directoryFile, Charset.forName("UTF-8"));
-      try (BufferedReader bufRead = source.openBufferedStream()) {
-        String line = bufRead.readLine();
-        while (line != null)
-        {
-          if (line.contains("file name=")) {
-            int start = line.indexOf('"') + 1;
-            int end = line.indexOf('"', start);
-            String file = line.substring(start, end);
-            if (file.endsWith(".xml")) xmlFiles.add(file);
+        // We will now have the directory file with all the links of the xml files so get a list of all the xml files
+        ArrayList<String> xmlFiles = new ArrayList<>();
+        CharSource source = Files.asCharSource(directoryFile, Charset.forName("UTF-8"));
+        try (BufferedReader bufRead = source.openBufferedStream()) {
+          String line = bufRead.readLine();
+          while (line != null)
+          {
+            if (line.contains("file name=")) {
+              int start = line.indexOf('"') + 1;
+              int end = line.indexOf('"', start);
+              String file = line.substring(start, end);
+              if (file.endsWith(".xml")) xmlFiles.add(file);
+            }
+            line = bufRead.readLine();
           }
-          line = bufRead.readLine();
-        }
-      } catch (IOException e) {
-        throw new RuntimeException("Exception reading file [" + directoryFile+ "]", e);
-      }
-
-      // Download the xml files and place them in a folder
-      File startPosition;
-      try {
-        startPosition = File.createTempFile("TempStartPosition", ".database");
-      } catch (IOException e) {
-        throw new RuntimeException("Unable to create start position directory", e);
-      }
-
-      if (!startPosition.delete() || !startPosition.mkdirs()) {
-        throw new IllegalStateException("Unable to transform [" + startPosition + "] into a temporary directory");
-      }
-
-      for (String xml : xmlFiles) {
-        File target;
-        try {
-          target = File.createTempFile(xml.substring(0,xml.indexOf('.')), ".xml", startPosition);
-          tempFiles.add(target);
         } catch (IOException e) {
-          throw new RuntimeException("Unable to create temp file for: " + xml, e);
+          throw new RuntimeException("Exception reading file [" + directoryFile+ "]", e);
         }
-        if (!target.getParentFile().mkdirs()) {
-          throw new RuntimeException("Unable to create directories for: " + target.getParentFile());
+
+        // Download the xml files and place them in a folder
+        File dataSet = createTempFile("dataset", ".database");
+        if (!dataSet.delete() || !dataSet.mkdirs()) {
+          throw new IllegalStateException("Unable to transform [" + dataSet + "] into a temporary directory");
         }
-        try {
-          downloadFileFromHttpUrl(new URL(url.toString() + xml), urlUsername, urlPassword, target);
-        } catch (MalformedURLException e) {
-          throw new RuntimeException("Unable to create URL: " + url.toString() + xml, e);
+
+        for (String xml : xmlFiles) {
+          File target = createTempFile(xml.substring(0,xml.indexOf('.')), ".xml", dataSet);
+          tempFiles.add(target);
+          if (!target.getParentFile().mkdirs()) {
+            throw new RuntimeException("Unable to create directories for: " + target.getParentFile());
+          }
+          try {
+            downloadFileFromHttpUrl(new URL(url.toString() + xml), urlUsername, urlPassword, target);
+          } catch (MalformedURLException e) {
+            throw new RuntimeException("Unable to create URL: " + url.toString() + xml, e);
+          }
         }
+
+        if (!directoryFile.delete()) {
+          throw new RuntimeException("Unable to delete [" + directoryFile + "]");
+        }
+
+        // add data set directory last so that when we attempt to delete it in the close() method the files it holds will already have been deleted.
+        tempFiles.add(dataSet);
+
+        return dataSet;
       }
-
-      if (!directoryFile.delete()) {
-        throw new RuntimeException("Unable to delete [" + directoryFile + "]");
-      }
-
-      // add start position directory last so that when we attempt to delete it in the close() method the files it holds will already have been deleted.
-      tempFiles.add(startPosition);
-
-      return startPosition;
     } else {
       throw new UnsupportedOperationException("Unsupported URL protocol on [" + url + "]");
     }
@@ -402,86 +403,65 @@ public class XmlDataSetProducer implements DataSetProducer {
 
 
   /**
-   * Method to download file from http url
+   * Wrapper for {@link java.io.File#createTempFile(String, String)} that
+   * wraps any exceptions in a {@link RuntimeException} and propagates it.
+   */
+  private File createTempFile(String prefix, String suffix) {
+    return createTempFile(prefix, suffix, null);
+  }
+
+
+  /**
+   * Wrapper for {@link java.io.File#createTempFile(String, String, File)} that
+   * wraps any exceptions in a {@link RuntimeException} and propagates it.
+   */
+  private File createTempFile(String prefix, String suffix, File file) {
+    try {
+      return File.createTempFile(prefix, suffix, file);
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to create temp file", e);
+    }
+  }
+
+
+  /**
+   * Downloads a file over HTTP/HTTPS.
    *
-   * @param url the url to download from
-   * @param urlUsername the username for the url.
-   * @param urlPassword the password for the url.
-   * @param file the file to populate from the download
+   * @param url The url to download from.
+   * @param urlUsername The username for the url.
+   * @param urlPassword The password for the url.
+   * @param file The file to populate from the download.
    */
   private void downloadFileFromHttpUrl(URL url, final String urlUsername, final String urlPassword, File file) {
-    // Set authentication for the url
-    Authenticator.setDefault (new Authenticator() {
-      @Override
-      protected PasswordAuthentication getPasswordAuthentication() {
-          return new PasswordAuthentication (urlUsername, urlPassword.toCharArray());
-      }
-    });
-
-    // Override the sun certificate trust manager so we ignore all certificate ssl handshake warnings
-    TrustManager[] trustAllCerts = new TrustManager[]{
-      new X509TrustManager() {
-          @Override
-          public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-              return new java.security.cert.X509Certificate[0];
-          }
-          @Override
-          public void checkClientTrusted(
-              java.security.cert.X509Certificate[] certs, String authType) {
-          }
-          @Override
-          public void checkServerTrusted(
-              java.security.cert.X509Certificate[] certs, String authType) {
-          }
-      }
-    };
-
-    // Activate the new trust manager
+    // -- Create connection to URL...
+    //
+    URLConnection urlConnection;
     try {
-        SSLContext sc = SSLContext.getInstance("SSL");
-        sc.init(null, trustAllCerts, new java.security.SecureRandom());
-        HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-    } catch (Exception e) {
-      throw new RuntimeException("Unable to activate the trust manager.", e);
-    }
-
-    // Open a readable byte channel for the url
-    ReadableByteChannel rbc;
-    try {
-      rbc = Channels.newChannel(url.openStream());
+      urlConnection = url.openConnection();
     } catch (IOException e) {
-      throw new RuntimeException("Unable to create readable byte channel", e);
+      throw new RuntimeException("Error opening connection to URL [" + url + "]", e);
     }
 
-    // Create a file output stream to transfer the data from the url to the temp file
-    FileOutputStream fos;
-    try {
-      fos = new FileOutputStream(file);
-    } catch (FileNotFoundException e) {
-      throw new RuntimeException("Unable to create file output stream", e);
+    // -- Set up authentication if required...
+    //
+    if (urlUsername != null && urlPassword != null) {
+      String userpass = urlUsername + ":" + urlPassword;
+      String basicAuth = "Basic " + javax.xml.bind.DatatypeConverter.printBase64Binary(userpass.getBytes(StandardCharsets.UTF_8));
+      urlConnection.setRequestProperty("Authorization", basicAuth);
     }
 
-    // transfer the data
-    try {
-      fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
-      fos.close();
+    // -- Download the file...
+    //
+    try (
+      ReadableByteChannel readableByteChannel = Channels.newChannel(urlConnection.getInputStream());
+      FileOutputStream fileOutputStream = new FileOutputStream(file);
+      FileChannel fileChannel = fileOutputStream.getChannel()
+    ) {
+      fileChannel.transferFrom(readableByteChannel, 0, Long.MAX_VALUE);
+      log.debug("Successfully downloaded file [" + url + "] to temp file [" + file + "]");
     } catch (IOException e) {
-      throw new RuntimeException("Unable to transfer from url to temp file", e);
+      throw new RuntimeException("Error downloading data set from [" + url + "]", e);
     }
-
-    // Remove username and password from being the default authentication
-    Authenticator.setDefault(null);
-
-    // Remove the overridden trust manager
-    try {
-      SSLContext sc = SSLContext.getInstance("SSL");
-      sc.init(null, null, new java.security.SecureRandom());
-      HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-    } catch (Exception e) {
-      throw new RuntimeException("Unable to reset the HttpsURLConnection defaultSSLSocketFactory.", e);
-    }
-
-
   }
 
 
@@ -515,18 +495,18 @@ public class XmlDataSetProducer implements DataSetProducer {
       // Read the meta data for the specified table
       InputStream inputStream = xmlStreamProvider.openInputStreamForTable(name);
       try {
-        XmlPullParser xmlPullParser = openPullParser(inputStream);
-        XmlPullProcessor.readTag(xmlPullParser, XmlDataSetNode.TABLE_NODE);
+        XMLStreamReader xmlStreamReader = openPullParser(inputStream);
+        XmlPullProcessor.readTag(xmlStreamReader, XmlDataSetNode.TABLE_NODE);
 
-        String version = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.VERSION_ATTRIBUTE);
+        String version = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.VERSION_ATTRIBUTE);
         if (StringUtils.isNotEmpty(version)) {
-          return new PullProcessorTableMetaData(xmlPullParser, Integer.parseInt(version));
+          return new PullProcessorTableMetaData(xmlStreamReader, Integer.parseInt(version));
         } else {
-          return new PullProcessorTableMetaData(xmlPullParser, 1);
+          return new PullProcessorTableMetaData(xmlStreamReader, 1);
         }
       } finally {
         // abandon any remaining content
-        IOUtils.closeQuietly(inputStream);
+        Closeables.closeQuietly(inputStream);
       }
     }
 
@@ -635,8 +615,8 @@ public class XmlDataSetProducer implements DataSetProducer {
      * @param xmlPullParser pull parser that provides the xml data
      * @param xmlFormatVersion The format version.
      */
-    public PullProcessorTableMetaData(XmlPullParser xmlPullParser, int xmlFormatVersion) {
-      super(xmlPullParser);
+    public PullProcessorTableMetaData(XMLStreamReader xmlStreamReader, int xmlFormatVersion) {
+      super(xmlStreamReader);
 
       if (xmlFormatVersion < 2) {
         columns.add(SchemaUtils.idColumn());
@@ -645,7 +625,7 @@ public class XmlDataSetProducer implements DataSetProducer {
 
       // Buffer the meta data
       readTag(XmlDataSetNode.METADATA_NODE);
-      tableName = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NAME_ATTRIBUTE);
+      tableName = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NAME_ATTRIBUTE);
 
       try {
         for (String nextTag = readNextTagInsideParent(XmlDataSetNode.METADATA_NODE); nextTag != null; nextTag = readNextTagInsideParent(XmlDataSetNode.METADATA_NODE)) {
@@ -743,16 +723,16 @@ public class XmlDataSetProducer implements DataSetProducer {
        */
       public PullProcessorColumn() {
         super();
-        columnName = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NAME_ATTRIBUTE);
-        dataType = DataType.valueOf(xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.TYPE_ATTRIBUTE));
-        defaultValue = StringUtils.defaultString(xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.DEFAULT_ATTRIBUTE));
+        columnName = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NAME_ATTRIBUTE);
+        dataType = DataType.valueOf(xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.TYPE_ATTRIBUTE));
+        defaultValue = StringUtils.defaultString(xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.DEFAULT_ATTRIBUTE));
 
         try {
           // not all datatypes need a width
           if (dataType.hasWidth()) {
             // The use of null indicates that although a scale should exist none
             // was provided.
-            String widthString = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.WIDTH_ATTRIBUTE);
+            String widthString = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.WIDTH_ATTRIBUTE);
             width = StringUtils.isEmpty(widthString) ? null : Integer.valueOf(widthString);
           } else {
             width = 0;
@@ -762,19 +742,19 @@ public class XmlDataSetProducer implements DataSetProducer {
           if (dataType.hasScale()) {
             // The use of null indicates that although a scale should exist none
             // was provided.
-            String scaleString = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.SCALE_ATTRIBUTE);
+            String scaleString = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.SCALE_ATTRIBUTE);
             scale = StringUtils.isEmpty(scaleString) ? null : Integer.valueOf(scaleString);
           } else {
             scale = 0;
           }
 
-          String nullableString = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NULLABLE_ATTRIBUTE);
+          String nullableString = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NULLABLE_ATTRIBUTE);
           nullable = StringUtils.isEmpty(nullableString) ? null : Boolean.valueOf(nullableString);
 
-          String primaryKeyString = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.PRIMARYKEY_ATTRIBUTE);
+          String primaryKeyString = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.PRIMARYKEY_ATTRIBUTE);
           primaryKey = StringUtils.isEmpty(primaryKeyString) ? null : Boolean.valueOf(primaryKeyString);
 
-          String autoNumString = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.AUTONUMBER_ATTRIBUTE);
+          String autoNumString = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.AUTONUMBER_ATTRIBUTE);
           autonumbered = StringUtils.isNotEmpty(autoNumString);
           autonumberStart = autonumbered ? Integer.valueOf(autoNumString) : null;
 
@@ -898,10 +878,10 @@ public class XmlDataSetProducer implements DataSetProducer {
        */
       public PullProcessorIndex() {
         super();
-        indexName = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NAME_ATTRIBUTE);
-        isUnique = Boolean.parseBoolean(xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.UNIQUE_ATTRIBUTE));
+        indexName = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.NAME_ATTRIBUTE);
+        isUnique = Boolean.parseBoolean(xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.UNIQUE_ATTRIBUTE));
 
-        String columnsNamesCombined = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.COLUMNS_ATTRIBUTE);
+        String columnsNamesCombined = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.COLUMNS_ATTRIBUTE);
 
         for (String columnName : StringUtils.split(columnsNamesCombined, ",")) {
           columnNames.add(columnName.trim());
@@ -970,19 +950,19 @@ public class XmlDataSetProducer implements DataSetProducer {
     /**
      * @param xmlPullParser Input stream containing the source XML data.
      */
-    public PullProcessorRecordIterator(XmlPullParser xmlPullParser) {
-      super(xmlPullParser);
+    public PullProcessorRecordIterator(XMLStreamReader xmlStreamReader) {
+      super(xmlStreamReader);
 
       // Store the column names and get to the first record
       readTag(XmlDataSetNode.TABLE_NODE);
 
       // read the meta data
       Table table;
-      String version = xmlPullParser.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.VERSION_ATTRIBUTE);
+      String version = xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, XmlDataSetNode.VERSION_ATTRIBUTE);
       if (StringUtils.isNotEmpty(version)) {
-        table = new PullProcessorTableMetaData(xmlPullParser, Integer.parseInt(version));
+        table = new PullProcessorTableMetaData(xmlStreamReader, Integer.parseInt(version));
       } else {
-        table = new PullProcessorTableMetaData(xmlPullParser, 1);
+        table = new PullProcessorTableMetaData(xmlStreamReader, 1);
       }
 
       for (Column column : table.columns()) {
@@ -1010,14 +990,19 @@ public class XmlDataSetProducer implements DataSetProducer {
     public Record next() {
       if (hasNext()) {
         // Buffer this record
-        Record result = new PullProcessorRecord();
+        RecordBuilder result = DataSetUtils.record();
+        for (String columnName : columnNames) {
+          result.setString(columnName.toUpperCase(),
+            Escaping.unescapeCharacters(xmlStreamReader.getAttributeValue(XmlDataSetNode.URI, columnName))
+          );
+        }
 
         // Is there another
         currentTagName = readNextTagInsideParent(XmlDataSetNode.DATA_NODE);
 
         return result;
       } else {
-        throw new IllegalStateException("No more records");
+        throw new NoSuchElementException("No more records");
       }
     }
 
@@ -1028,42 +1013,6 @@ public class XmlDataSetProducer implements DataSetProducer {
     @Override
     public void remove() {
       throw new UnsupportedOperationException("Cannot remove item from a record iterator");
-    }
-
-    /**
-     * Implementation of {@link Record} that reads attribute values from the
-     * pull parser.
-     *
-     * @author Copyright (c) Alfa Financial Software 2009
-     */
-    private final class PullProcessorRecord implements Record {
-
-      /**
-       * Buffers the record values so the pull parser can move on.
-       */
-      private final Map<String, String> values = new HashMap<>();
-
-
-      /**
-       * Buffers the record values.
-       */
-      public PullProcessorRecord() {
-        super();
-
-        for (String columnName : columnNames) {
-          values.put(columnName.toUpperCase(), xmlPullParser.getAttributeValue(XmlDataSetNode.URI, columnName));
-        }
-      }
-
-
-      /**
-       * @see org.alfasoftware.morf.dataset.Record#getValue(java.lang.String)
-       */
-      @Override
-      public String getValue(String name) {
-        return values.get(name.toUpperCase());
-      }
-
     }
   }
 

@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import org.alfasoftware.morf.jdbc.DatabaseType;
@@ -48,7 +49,6 @@ import org.alfasoftware.morf.sql.element.ConcatenatedField;
 import org.alfasoftware.morf.sql.element.FieldLiteral;
 import org.alfasoftware.morf.sql.element.FieldReference;
 import org.alfasoftware.morf.sql.element.Function;
-import org.alfasoftware.morf.sql.element.TableReference;
 import org.alfasoftware.morf.sql.element.WindowFunction;
 import org.apache.commons.lang.StringUtils;
 import org.joda.time.LocalDate;
@@ -301,9 +301,8 @@ class SqlServerDialect extends SqlDialect {
     // the current (next - 1) value to the start value minus one, then lets SQL server correct it to the highest
     // value in the table if it is too low.
 
-    // TODO WEB-23969 if we're running on SQL Server 2012, this bug no longer exists so we can just reseed as for an empty
-    // table (i.e. autonumber.getAutoNumberStart()).  Need to implement this (although we need SQL Server 2012 to test
-    // against first.
+    // TODO Alfa internal ref WEB-23969 if we're running on SQL Server 2012, this bug no longer exists so we can
+    // just reseed as for an empty table (i.e. autonumber.getAutoNumberStart()).  Need to implement this.
     executor.execute(ImmutableList.of(
       "SET IDENTITY_INSERT " + schemaNamePrefix() + table.getName() + " OFF",
 
@@ -469,49 +468,6 @@ class SqlServerDialect extends SqlDialect {
 
 
   /**
-   * @see org.alfasoftware.morf.jdbc.SqlDialect#buildAutonumberUpdate(org.alfasoftware.morf.sql.element.TableReference, java.lang.String, java.lang.String, java.lang.String, java.lang.String)
-   */
-  @Override
-  public List<String> buildAutonumberUpdate(TableReference dataTable, String fieldName, String tableName, String nameColumn,
-    String valueColumn) {
-    String autoNumberName = getAutoNumberName(dataTable.getName());
-
-    if (autoNumberName.equals("autonumber")) {
-      return new ArrayList<>();
-    }
-
-    StringBuilder sql = new StringBuilder();
-    sql.append("MERGE INTO ");
-    sql.append(schemaNamePrefix());
-    sql.append(tableName);
-    sql.append(" A ");
-    sql.append("USING (");
-    sql.append(getExistingMaxAutoNumberValue(dataTable, fieldName));
-    sql.append(") S ");
-    sql.append("ON (A.");
-    sql.append(nameColumn);
-    sql.append(" = '");
-    sql.append(autoNumberName);
-    sql.append("') ");
-    sql.append("WHEN MATCHED THEN UPDATE SET A.");
-    sql.append(valueColumn);
-    sql.append(" = CASE WHEN S.CurrentValue > A.");
-    sql.append(valueColumn);
-    sql.append(" THEN S.CurrentValue ELSE A.");
-    sql.append(valueColumn);
-    sql.append(" END WHEN NOT MATCHED THEN INSERT (");
-    sql.append(nameColumn);
-    sql.append(", ");
-    sql.append(valueColumn);
-    sql.append(") VALUES ('");
-    sql.append(autoNumberName);
-    sql.append("', S.CurrentValue);");
-
-    return ImmutableList.of(sql.toString());
-  }
-
-
-  /**
    * {@inheritDoc}
    *
    * @see org.alfasoftware.morf.jdbc.SqlDialect#getSqlFrom(org.alfasoftware.morf.sql.UpdateStatement)
@@ -560,7 +516,8 @@ class SqlServerDialect extends SqlDialect {
   public Collection<String> alterTableAddColumnStatements(Table table, Column column) {
     List<String> statements = new ArrayList<>();
 
-    //TODO looks like if we're adding to an existing PK we should drop the PK first here...
+    // TODO looks like if we're adding to an existing PK we should drop the PK first here. SQL
+    // server is currently hard to test so need to investigate further.
 
     StringBuilder statement = new StringBuilder()
       .append("ALTER TABLE ")
@@ -880,7 +837,7 @@ class SqlServerDialect extends SqlDialect {
    */
   @Override
   protected String getSqlForNow(Function function) {
-    return "GETDATE()";
+    return "GETUTCDATE()";
   }
 
 
@@ -1273,5 +1230,23 @@ class SqlServerDialect extends SqlDialect {
   @Override
   protected String getSqlForLastDayOfMonth(AliasedField date) {
     return "DATEADD(s,-1,DATEADD(mm, DATEDIFF(m,0," + getSqlFrom(date) + ")+1,0))";
+  }
+
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.SqlDialect.getSqlForAnalyseTable(Table)
+   */
+  @Override
+  public Collection<String> getSqlForAnalyseTable(Table table) {
+    return SqlDialect.NO_STATEMENTS;
+  }
+
+
+  /**
+   * @see SqlDialect#getDeleteLimitPreFromClause(int)
+   */
+  @Override
+  protected Optional<String> getDeleteLimitPreFromClause(int limit) {
+    return Optional.of("TOP (" + limit + ")");
   }
 }

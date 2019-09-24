@@ -31,10 +31,10 @@ import com.google.common.collect.Lists;
  * Encapsulates the generation of an PARTITION BY SQL statement. <blockquote>
  *
  * <pre>
- *   SqlUtils.windowFunction([function])                      = [function]
- *        |----> .partitionBy([fields]...)                    = [function] OVER (PARTITION BY [fields])
- *                |----> .orderBy([fields]...)                = [function] OVER (PARTITION BY [fields] ORDER BY [fields])
- *        |----> .orderBy([fields]...)                        = [function] OVER (ORDER BY [fields])
+ *   SqlUtils.windowFunction([function])                         = [function]
+ *        |----&gt; .partitionBy([fields]...)                    = [function] OVER (PARTITION BY [fields])
+ *                |----&gt; .orderBy([fields]...)                = [function] OVER (PARTITION BY [fields] ORDER BY [fields])
+ *        |----&gt; .orderBy([fields]...)                        = [function] OVER (ORDER BY [fields])
  * </pre>
  *
  * </blockquote> Restrictions:
@@ -56,7 +56,7 @@ public final class WindowFunction extends AliasedField implements Driver {
   private final ImmutableList<AliasedField> orderBys;
   private final ImmutableList<AliasedField> partitionBys;
 
-  private WindowFunction(String alias,Function function, ImmutableList<AliasedField> orderBys, ImmutableList<AliasedField> partitionBy) {
+  private WindowFunction(String alias, Function function, ImmutableList<AliasedField> orderBys, ImmutableList<AliasedField> partitionBy) {
     super(alias);
     this.function = function;
     this.orderBys = orderBys;
@@ -67,6 +67,7 @@ public final class WindowFunction extends AliasedField implements Driver {
   /**
    * Starts a new window function Builder.
    * @param function the function to construct the window function over.
+   * @return the window function builder
    */
   public static Builder over(Function function) {
     return new BuilderImpl(function);
@@ -110,6 +111,7 @@ public final class WindowFunction extends AliasedField implements Driver {
      * used.
      *
      * @param orderByFields the fields to order by.
+     * @return The window function builder
      */
     Builder orderBy(AliasedField... orderByFields);
 
@@ -120,6 +122,7 @@ public final class WindowFunction extends AliasedField implements Driver {
      * used.
      *
      * @param orderByFields the fields to order by.
+     * @return the window function builder
      */
     Builder orderBy(Iterable<? extends AliasedField> orderByFields);
 
@@ -128,6 +131,7 @@ public final class WindowFunction extends AliasedField implements Driver {
      * Specifies the fields to partition by.
      *
      * @param partitionByFields the fields to partition by.
+     * @return the window function builder
      */
     Builder partitionBy(AliasedField... partitionByFields);
 
@@ -136,8 +140,28 @@ public final class WindowFunction extends AliasedField implements Driver {
      * Specifies the fields to partition by.
      *
      * @param partitionByFields the fields to partition by.
+     * @return the window function builder
      */
     Builder partitionBy(Iterable<? extends AliasedField> partitionByFields);
+
+
+    /**
+     * Specifies the alias to use for the field.
+     *
+     * @param alias the name of the alias
+     * @return the window function builder.
+     */
+    @Override
+    Builder as(String alias);
+
+
+    /**
+     * Builds the {@link WindowFunction}.
+     *
+     * @return The window function.
+     */
+    @Override
+    WindowFunction build();
   }
 
 
@@ -203,34 +227,38 @@ public final class WindowFunction extends AliasedField implements Driver {
 
 
     @Override
-    public AliasedField build() {
+    public Builder as(String alias) {
+      this.alias = alias;
+      return this;
+    }
+
+
+    @Override
+    public WindowFunction build() {
       setOrderByAscendingIfUnset();
-      return new WindowFunction(alias,function, ImmutableList.copyOf(orderBys), ImmutableList.copyOf(partitionBy));
+      return new WindowFunction(alias, function, ImmutableList.copyOf(orderBys), ImmutableList.copyOf(partitionBy));
     }
 
 
     private void setOrderByAscendingIfUnset() {
-      for (AliasedField currentField : orderBys) {
-        if (currentField instanceof FieldReference && ((FieldReference) currentField).getDirection() == Direction.NONE) {
-          ((FieldReference) currentField).setDirection(Direction.ASCENDING);
-        }
-      }
-    }
-
-
-    /**
-     * @see org.alfasoftware.morf.sql.element.AliasedFieldBuilder#as(java.lang.String)
-     */
-    @Override
-    public AliasedFieldBuilder as(String alias) {
-      this.alias = alias;
-      return null;
+      List<AliasedField> replacements = FluentIterable
+          .from(orderBys)
+          .transform(f -> {
+            if (f instanceof FieldReference && ((FieldReference) f).getDirection() == Direction.NONE) {
+              return ((FieldReference)f).direction(Direction.ASCENDING);
+            } else {
+              return f;
+            }
+          })
+          .toList();
+      orderBys.clear();
+      orderBys.addAll(replacements);
     }
   }
 
 
   /**
-   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal()
+   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal(DeepCopyTransformation)
    */
   @Override
   protected AliasedField deepCopyInternal(DeepCopyTransformation transformer) {
@@ -242,8 +270,73 @@ public final class WindowFunction extends AliasedField implements Driver {
   }
 
 
+  @Override
+  protected AliasedField shallowCopy(String aliasName) {
+    return new WindowFunction(
+        aliasName,
+        function,
+        orderBys,
+        partitionBys);
+  }
+
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((function == null) ? 0 : function.hashCode());
+    result = prime * result + ((orderBys == null) ? 0 : orderBys.hashCode());
+    result = prime * result + ((partitionBys == null) ? 0 : partitionBys.hashCode());
+    return result;
+  }
+
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj)
+      return true;
+    if (!super.equals(obj))
+      return false;
+    if (getClass() != obj.getClass())
+      return false;
+    WindowFunction other = (WindowFunction) obj;
+    if (function == null) {
+      if (other.function != null)
+        return false;
+    } else if (!function.equals(other.function))
+      return false;
+    if (orderBys == null) {
+      if (other.orderBys != null)
+        return false;
+    } else if (!orderBys.equals(other.orderBys))
+      return false;
+    if (partitionBys == null) {
+      if (other.partitionBys != null)
+        return false;
+    } else if (!partitionBys.equals(other.partitionBys))
+      return false;
+    return true;
+  }
+
+
+  @Override
+  public String toString() {
+    StringBuilder builder = new StringBuilder();
+    builder.append(function);
+    builder.append(" OVER [");
+    if (!partitionBys.isEmpty()) {
+      builder.append(" PARTITION BY ").append(partitionBys);
+    }
+    if (!orderBys.isEmpty()) {
+      builder.append(" ORDER BY ").append(orderBys);
+    }
+    builder.append(" ]");
+    return builder.toString();
+  }
+
+
   /**
-   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(org.alfasoftware.morf.sql.ObjectTreeTraverser.VisitorDispatcher)
+   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(ObjectTreeTraverser)
    */
   @Override
   public void drive(ObjectTreeTraverser traverser) {

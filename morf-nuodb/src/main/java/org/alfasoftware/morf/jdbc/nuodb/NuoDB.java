@@ -16,6 +16,7 @@
 package org.alfasoftware.morf.jdbc.nuodb;
 
 import java.sql.Connection;
+import java.util.Optional;
 
 import javax.sql.XADataSource;
 
@@ -23,7 +24,6 @@ import org.alfasoftware.morf.jdbc.AbstractDatabaseType;
 import org.alfasoftware.morf.jdbc.JdbcUrlElements;
 import org.alfasoftware.morf.jdbc.SqlDialect;
 import org.alfasoftware.morf.metadata.Schema;
-import com.google.common.base.Optional;
 
 /**
  * Support for NuoDB database hosts.
@@ -89,12 +89,12 @@ public final class NuoDB extends AbstractDatabaseType {
 
 
   /**
-   * TODO this should really be supported.
+   * FIXME this should really be supported to allow use of the data transfer UI.
    *
    * @see org.alfasoftware.morf.jdbc.DatabaseType#extractJdbcUrl(java.lang.String)
    */
   @Override
   public Optional<JdbcUrlElements> extractJdbcUrl(String url) {
-    return Optional.absent();
+    return Optional.empty();
   }
 }

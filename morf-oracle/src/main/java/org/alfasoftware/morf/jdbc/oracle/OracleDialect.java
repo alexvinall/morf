@@ -15,41 +15,44 @@
 
 package org.alfasoftware.morf.jdbc.oracle;
 
-import static org.alfasoftware.morf.metadata.DataType.BOOLEAN;
 import static org.alfasoftware.morf.metadata.DataType.DECIMAL;
 import static org.alfasoftware.morf.metadata.SchemaUtils.namesOfColumns;
 import static org.alfasoftware.morf.metadata.SchemaUtils.primaryKeysForTable;
 import static org.alfasoftware.morf.sql.SqlUtils.parameter;
+import static org.alfasoftware.morf.sql.element.Direction.ASCENDING;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
-import org.alfasoftware.morf.dataset.Record;
 import org.alfasoftware.morf.jdbc.DatabaseType;
 import org.alfasoftware.morf.jdbc.NamedParameterPreparedStatement;
-import org.alfasoftware.morf.jdbc.RecordValueToDatabaseSafeStringConverter;
 import org.alfasoftware.morf.jdbc.SqlDialect;
 import org.alfasoftware.morf.jdbc.SqlScriptExecutor;
 import org.alfasoftware.morf.metadata.Column;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Index;
-import org.alfasoftware.morf.metadata.Schema;
 import org.alfasoftware.morf.metadata.SchemaUtils;
 import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.metadata.View;
 import org.alfasoftware.morf.sql.Hint;
-import org.alfasoftware.morf.sql.InsertStatement;
 import org.alfasoftware.morf.sql.MergeStatement;
 import org.alfasoftware.morf.sql.OptimiseForRowCount;
+import org.alfasoftware.morf.sql.ParallelQueryHint;
 import org.alfasoftware.morf.sql.SelectFirstStatement;
 import org.alfasoftware.morf.sql.SelectStatement;
+import org.alfasoftware.morf.sql.UpdateStatement;
 import org.alfasoftware.morf.sql.UseImplicitJoinOrder;
 import org.alfasoftware.morf.sql.UseIndex;
+import org.alfasoftware.morf.sql.UseParallelDml;
 import org.alfasoftware.morf.sql.element.AliasedField;
 import org.alfasoftware.morf.sql.element.ConcatenatedField;
+import org.alfasoftware.morf.sql.element.FieldReference;
 import org.alfasoftware.morf.sql.element.Function;
 import org.alfasoftware.morf.sql.element.SqlParameter;
 import org.apache.commons.lang.StringEscapeUtils;
@@ -68,7 +71,7 @@ import com.google.common.collect.Lists;
  *
  * @author Copyright (c) Alfa Financial Software 2010
  */
-class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStringConverter {
+class OracleDialect extends SqlDialect {
 
   private static final Log log = LogFactory.getLog(OracleDialect.class);
 
@@ -78,10 +81,20 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
   private static final String MERGE_SOURCE_ALIAS = "xmergesource";
 
   /**
+   * Database platforms may order nulls first or last. This null first.
+   */
+  public static final String NULLS_FIRST = "NULLS FIRST";
+
+  /**
+   * Database platforms may order nulls first or last. This is null last.
+   */
+  public static final String NULLS_LAST = "NULLS LAST";
+
+  /**
    * Database platforms may order nulls first or last. My SQL always orders nulls first, Oracle defaults to ordering nulls last.
    * Fortunately on Oracle it is possible to specify that nulls should be ordered first.
    */
-  public static final String DEFAULT_NULL_ORDER = "NULLS FIRST";
+  public static final String DEFAULT_NULL_ORDER = NULLS_FIRST;
 
 
   /**
@@ -387,14 +400,7 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
     if (insertingUnderAutonumLimit) {
       return;
     }
-
-    Column sequence = getAutoIncrementColumnForTable(table);
-
-    if(sequence == null) {
-      return;
-    }
-
-    executor.execute(rebuildSequenceAndTrigger(table,sequence),connection);
+    executor.execute(rebuildSequenceAndTrigger(table,getAutoIncrementColumnForTable(table)),connection);
   }
 
 
@@ -406,12 +412,16 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
    */
   private Collection<String> rebuildSequenceAndTrigger(Table table,Column sequence) {
     // This requires drop/create trigger/sequence privileges so we avoid where we can.
-      List<String> statements = new ArrayList<>();
-      statements.add(dropTrigger(table));
-      statements.add(dropSequence(table));
-      statements.add(createSequenceStartingFromExistingData(table, sequence));
-      statements.addAll(createTrigger(table, sequence));
-      return statements;
+    if(sequence == null) {
+      return Lists.newArrayList(dropTrigger(table));
+    }
+
+    List<String> statements = new ArrayList<>();
+    statements.add(dropTrigger(table));
+    statements.add(dropSequence(table));
+    statements.add(createSequenceStartingFromExistingData(table, sequence));
+    statements.addAll(createTrigger(table, sequence));
+    return statements;
   }
 
 
@@ -528,29 +538,14 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
 
 
   /**
-   * @see org.alfasoftware.morf.jdbc.SqlDialect#prepareStatementParameter(NamedParameterPreparedStatement, SqlParameter, int, java.lang.String)
+   * @see org.alfasoftware.morf.jdbc.SqlDialect#prepareBooleanParameter(org.alfasoftware.morf.jdbc.NamedParameterPreparedStatement, java.lang.Boolean, org.alfasoftware.morf.sql.element.SqlParameter)
    */
   @Override
-  public void prepareStatementParameter(NamedParameterPreparedStatement statement, SqlParameter parameter, String value) {
-    if (parameter.getMetadata().getType() == BOOLEAN) {
-      SqlParameter decimalVersion = parameter(parameter.getImpliedName()).type(DECIMAL).width(1, 0);
-      super.prepareStatementParameter(statement, decimalVersion, convertColumnValueToDatabaseSafeString(parameter.getMetadata(), value, null));
-    } else {
-      super.prepareStatementParameter(statement, parameter, value);
-    }
-  }
-
-
-  /**
-   * @see org.alfasoftware.morf.jdbc.SqlDialect#buildParameterisedInsert(org.alfasoftware.morf.sql.InsertStatement,
-   *      org.alfasoftware.morf.metadata.Schema)
-   */
-  @Override
-  public String buildParameterisedInsert(InsertStatement statement, Schema metadata) {
-    // Ensure that a modifier is placed in the query
-    String result = super.buildParameterisedInsert(statement, metadata);
-
-    return result.replaceFirst("^\\w+", "insert /*+ append */");
+  protected void prepareBooleanParameter(NamedParameterPreparedStatement statement, Boolean boolVal, SqlParameter parameter) throws SQLException {
+    statement.setBigDecimal(
+      parameter(parameter.getImpliedName()).type(DECIMAL).width(1),
+      boolVal == null ? null : boolVal ? BigDecimal.ONE : BigDecimal.ZERO
+    );
   }
 
 
@@ -595,18 +590,6 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
 
 
   /**
-   * Converts the {@link Record} value to an Oracle-compatible SQL expression,
-   * using an empty string for nulls.
-   *
-   * @see org.alfasoftware.morf.dataset.RecordHelper.RecordValueToDatabaseSafeStringConverter#recordValueToDatabaseSafeString(org.alfasoftware.morf.metadata.Column, java.lang.String)
-   */
-  @Override
-  public String recordValueToDatabaseSafeString(Column column, String sourceValue) {
-    return convertColumnValueToDatabaseSafeString(column, sourceValue, "");
-  }
-
-
-  /**
    * @see org.alfasoftware.morf.jdbc.SqlDialect#buildSQLToStartTracing(java.lang.String)
    */
   @Override
@@ -622,6 +605,30 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
   public List<String> buildSQLToStopTracing() {
     return Arrays.asList("ALTER SESSION SET EVENTS '10046 TRACE NAME CONTEXT OFF'");
   }
+
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.SqlDialect#getSqlForOrderByFieldNullValueHandling(org.alfasoftware.morf.sql.element.FieldReference)
+   */
+  @Override
+  protected String getSqlForOrderByFieldNullValueHandling(FieldReference orderByField) {
+    if (orderByField.getNullValueHandling().isPresent()) {
+      switch (orderByField.getNullValueHandling().get()) {
+        case FIRST:
+          return " " + NULLS_FIRST;
+        case LAST:
+          return " " + NULLS_LAST;
+        case NONE:
+        default:
+          return "";
+      }
+    } else if (orderByField.getDirection() != null) {
+      return ASCENDING.equals(orderByField.getDirection()) ? " " + NULLS_FIRST : " " + NULLS_LAST;
+    } else {
+      return " " + defaultNullOrder();
+    }
+  }
+
 
   /**
    * {@inheritDoc}
@@ -801,7 +808,7 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
       }
     }
 
-    if (!newColumn.getName().equals(oldColumn.getName())) {
+    if (!newColumn.getName().equalsIgnoreCase(oldColumn.getName())) {
       result.add("ALTER TABLE " + schemaNamePrefix() + truncatedTableName + " RENAME COLUMN " + oldColumn.getName() + " TO " + newColumn.getName());
     }
 
@@ -948,7 +955,7 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
    */
   @Override
   protected String getSqlForNow(Function function) {
-    return "SYSDATE";
+    return "SYSTIMESTAMP AT TIME ZONE 'UTC'";
   }
 
 
@@ -1149,7 +1156,7 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
         .append(convertStatementToSQL(selectStatement))
         .toString()
       );
-    result.add("ALTER TABLE " + qualifiedTableName(table) + " NOPARALLEL LOGGING");
+    result.add("ALTER TABLE " + schemaNamePrefix() + table.getName()  + " NOPARALLEL LOGGING");
 
     if (!primaryKeysForTable(table).isEmpty()) {
       result.add("ALTER INDEX " + schemaNamePrefix() + primaryKeyConstraintName(table.getName()) + " NOPARALLEL LOGGING");
@@ -1316,6 +1323,9 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
       if (hint instanceof UseImplicitJoinOrder) {
         builder.append(" ORDERED");
       }
+      if (hint instanceof ParallelQueryHint) {
+        builder.append(" PARALLEL");
+      }
     }
 
     return builder.append(" */ ").toString();
@@ -1323,18 +1333,25 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
 
 
   /**
+   * @see org.alfasoftware.morf.jdbc.SqlDialect#updateStatementPreTableDirectives(org.alfasoftware.morf.sql.UpdateStatement)
+   */
+  @Override
+  protected String updateStatementPreTableDirectives(UpdateStatement updateStatement) {
+    for (Hint hint : updateStatement.getHints()) {
+      if (hint instanceof UseParallelDml) {
+        return "/*+ ENABLE_PARALLEL_DML PARALLEL */ "; // only the single hint supported so return immediately
+      }
+    }
+    return "";
+  }
+
+
+  /**
    * @see org.alfasoftware.morf.jdbc.SqlDialect#rebuildTriggers(org.alfasoftware.morf.metadata.Table)
    */
   @Override
   public Collection<String> rebuildTriggers(Table table) {
-
-    Column sequence = getAutoIncrementColumnForTable(table);
-
-    if(sequence == null) {
-      return SqlDialect.NO_STATEMENTS;
-    }
-
-    return rebuildSequenceAndTrigger(table,sequence);
+    return rebuildSequenceAndTrigger(table,getAutoIncrementColumnForTable(table));
   }
 
 
@@ -1373,5 +1390,28 @@ class OracleDialect extends SqlDialect implements RecordValueToDatabaseSafeStrin
   @Override
   protected String getSqlForLastDayOfMonth(AliasedField date) {
     return "LAST_DAY(" + getSqlFrom(date) + ")";
+  }
+
+
+  /**
+   * @see org.alfasoftware.morf.jdbc.SqlDialect.getSqlForAnalyseTable(Table)
+   */
+  @Override
+  public Collection<String> getSqlForAnalyseTable(Table table) {
+    return ImmutableList.of(
+                     "BEGIN \n" +
+                       "DBMS_STATS.GATHER_TABLE_STATS(ownname=> '" + getSchemaName() + "', "
+                          + "tabname=>'" + table.getName() + "', "
+                          + "cascade=>true, degree=>DBMS_STATS.AUTO_DEGREE, no_invalidate=>false); \n"
+                   + "END;");
+  }
+
+
+  /**
+   * @see SqlDialect#getDeleteLimitWhereClause(int)
+   */
+  @Override
+  protected Optional<String> getDeleteLimitWhereClause(int limit) {
+    return Optional.of("ROWNUM <= " + limit);
   }
 }

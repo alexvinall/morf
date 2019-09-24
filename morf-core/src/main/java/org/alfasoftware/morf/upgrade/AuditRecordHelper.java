@@ -15,11 +15,13 @@
 
 package org.alfasoftware.morf.upgrade;
 
+import static org.alfasoftware.morf.sql.SqlUtils.cast;
 import static org.alfasoftware.morf.sql.element.Function.dateToYyyyMMddHHmmss;
 import static org.alfasoftware.morf.sql.element.Function.now;
 
 import java.util.UUID;
 
+import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Schema;
 import org.alfasoftware.morf.sql.InsertStatement;
 import org.alfasoftware.morf.sql.element.FieldLiteral;
@@ -56,13 +58,14 @@ public class AuditRecordHelper {
    *
    * @param uuid The UUID of the step which has been applied
    * @param description The description of the step.
+   * @return The insert statement
    */
   public static InsertStatement createAuditInsertStatement(UUID uuid, String description) {
     InsertStatement auditRecord = new InsertStatement().into(
       new TableReference("UpgradeAudit")).values(
         new FieldLiteral(uuid.toString()).as("upgradeUUID"),
         new FieldLiteral(description).as("description"),
-        dateToYyyyMMddHHmmss(now()).as("appliedTime")
+        cast(dateToYyyyMMddHHmmss(now())).asType(DataType.DECIMAL, 14).as("appliedTime")
       );
     return auditRecord;
   }

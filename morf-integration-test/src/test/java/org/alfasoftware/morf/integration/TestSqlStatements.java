@@ -18,11 +18,13 @@ package org.alfasoftware.morf.integration;
 import static org.alfasoftware.morf.metadata.DataSetUtils.dataSetProducer;
 import static org.alfasoftware.morf.metadata.DataSetUtils.record;
 import static org.alfasoftware.morf.metadata.DataType.INTEGER;
+import static org.alfasoftware.morf.metadata.DataType.STRING;
 import static org.alfasoftware.morf.metadata.SchemaUtils.autonumber;
 import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static org.alfasoftware.morf.metadata.SchemaUtils.index;
 import static org.alfasoftware.morf.metadata.SchemaUtils.schema;
 import static org.alfasoftware.morf.metadata.SchemaUtils.table;
+import static org.alfasoftware.morf.sql.SqlUtils.cast;
 import static org.alfasoftware.morf.sql.SqlUtils.concat;
 import static org.alfasoftware.morf.sql.SqlUtils.field;
 import static org.alfasoftware.morf.sql.SqlUtils.insert;
@@ -36,6 +38,7 @@ import static org.alfasoftware.morf.sql.SqlUtils.selectFirst;
 import static org.alfasoftware.morf.sql.SqlUtils.tableRef;
 import static org.alfasoftware.morf.sql.SqlUtils.truncate;
 import static org.alfasoftware.morf.sql.SqlUtils.update;
+import static org.alfasoftware.morf.sql.SqlUtils.when;
 import static org.alfasoftware.morf.sql.SqlUtils.windowFunction;
 import static org.alfasoftware.morf.sql.element.Criterion.and;
 import static org.alfasoftware.morf.sql.element.Criterion.eq;
@@ -47,6 +50,7 @@ import static org.alfasoftware.morf.sql.element.Function.average;
 import static org.alfasoftware.morf.sql.element.Function.coalesce;
 import static org.alfasoftware.morf.sql.element.Function.count;
 import static org.alfasoftware.morf.sql.element.Function.daysBetween;
+import static org.alfasoftware.morf.sql.element.Function.every;
 import static org.alfasoftware.morf.sql.element.Function.floor;
 import static org.alfasoftware.morf.sql.element.Function.leftPad;
 import static org.alfasoftware.morf.sql.element.Function.leftTrim;
@@ -59,10 +63,12 @@ import static org.alfasoftware.morf.sql.element.Function.power;
 import static org.alfasoftware.morf.sql.element.Function.random;
 import static org.alfasoftware.morf.sql.element.Function.randomString;
 import static org.alfasoftware.morf.sql.element.Function.rightTrim;
+import static org.alfasoftware.morf.sql.element.Function.some;
 import static org.alfasoftware.morf.sql.element.Function.substring;
 import static org.alfasoftware.morf.sql.element.Function.sum;
 import static org.alfasoftware.morf.sql.element.Function.yyyymmddToDate;
 import static org.alfasoftware.morf.sql.element.MathsOperator.MINUS;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -78,6 +84,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -110,9 +119,11 @@ import org.alfasoftware.morf.sql.InsertStatement;
 import org.alfasoftware.morf.sql.MergeStatement;
 import org.alfasoftware.morf.sql.SelectFirstStatement;
 import org.alfasoftware.morf.sql.SelectStatement;
+import org.alfasoftware.morf.sql.SqlUtils;
 import org.alfasoftware.morf.sql.TruncateStatement;
 import org.alfasoftware.morf.sql.UpdateStatement;
 import org.alfasoftware.morf.sql.element.AliasedField;
+import org.alfasoftware.morf.sql.element.CaseStatement;
 import org.alfasoftware.morf.sql.element.Cast;
 import org.alfasoftware.morf.sql.element.Criterion;
 import org.alfasoftware.morf.sql.element.FieldLiteral;
@@ -198,7 +209,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
         column("decimalTenZeroCol", DataType.DECIMAL, 10),
         column("decimalNineFiveCol", DataType.DECIMAL, 9, 5),
         column("bigIntegerCol", DataType.BIG_INTEGER, 19),
-        column("nullableBigIntegerCol", DataType.BIG_INTEGER, 19).nullable()
+        column("nullableBigIntegerCol", DataType.BIG_INTEGER, 19).nullable(),
+        column("blobCol", DataType.BLOB, 19).nullable()
       ),
     table("DateTable")
       .columns(
@@ -222,6 +234,11 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
         column("column1", DataType.BOOLEAN).nullable(),
         column("column2", DataType.BOOLEAN).nullable()
       ),
+    table("AccumulateBooleanTable")
+      .columns(
+        column("column1", DataType.BOOLEAN).nullable(),
+        column("column2", DataType.BOOLEAN).nullable()
+      ),
     table("LeftAndRightTrimTable")
       .columns(
         column("indexColumn", DataType.INTEGER).primaryKey(),
@@ -240,7 +257,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
     table("SelectFirstTable")
       .columns(
         column("field1", DataType.INTEGER),
-        column("field2", DataType.STRING, 30).nullable()
+        column("field2", DataType.STRING, 30).nullable(),
+        column("field3", DataType.INTEGER).nullable()
       ),
     table("AutoNumbered")
       .columns(
@@ -272,7 +290,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
         column("autoNum", DataType.INTEGER).autoNumbered(101).primaryKey(),
         column("column1", DataType.INTEGER),
         column("column2", DataType.INTEGER),
-        column("column3", DataType.STRING, 10).nullable()
+        column("column3", DataType.STRING, 10).nullable(),
+        column("column4", DataType.STRING, 10).nullable()
       )
       .indexes(
         index("Index_1").columns("column1", "column2").unique()
@@ -354,314 +373,323 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
   private final DataSetProducer dataSet = dataSetProducer(schema)
     .table("SimpleTypes",
       record()
-        .value("stringCol", "hello world AA")
-        .value("nullableStringCol", "not null")
-        .value("decimalTenZeroCol", "9817236")
-        .value("decimalNineFiveCol", "278.231")
-        .value("bigIntegerCol", "1234567890123456")
-        .value("nullableBigIntegerCol", "56732")
+        .setString("stringCol", "hello world AA")
+        .setString("nullableStringCol", "not null")
+        .setString("decimalTenZeroCol", "9817236")
+        .setString("decimalNineFiveCol", "278.231")
+        .setLong("bigIntegerCol", 1234567890123456L)
+        .setLong("nullableBigIntegerCol", 56732L)
+        .setByteArray("blobCol", "hello world BLOB".getBytes())
     )
     .table("DateTable",
       record()
-        .value("alfaDate1", "20040609")
-        .value("alfaDate2", "20040813"), // 65 days difference
+        .setInteger("alfaDate1", 20040609)
+        .setInteger("alfaDate2", 20040813), // 65 days difference
         record()
-        .value("alfaDate1", "20040609")
-        .value("alfaDate2", "20040609"), // 0 days difference
+        .setInteger("alfaDate1", 20040609)
+        .setInteger("alfaDate2", 20040609), // 0 days difference
         record()
-        .value("alfaDate1", "20040609")
-        .value("alfaDate2", "20040610"), // 1 day difference
+        .setInteger("alfaDate1", 20040609)
+        .setInteger("alfaDate2", 20040610), // 1 day difference
       record()
-        .value("alfaDate1", "20050813")
-        .value("alfaDate2", "20040813"), // -365 days difference
+        .setInteger("alfaDate1", 20050813)
+        .setInteger("alfaDate2", 20040813), // -365 days difference
       record()
-        .value("alfaDate1", "20040213")
-        .value("alfaDate2", "20060424") // 801 days difference
+        .setInteger("alfaDate1", 20040213)
+        .setInteger("alfaDate2", 20060424) // 801 days difference
     )
     .table("LastDayOfMonthTable",
       record()
-      .value("alfaDate1", "20090701"), // 31 day month
+      .setInteger("alfaDate1", 20090701), // 31 day month
     record()
-      .value("alfaDate1", "20090615"), // 30 day month
+      .setInteger("alfaDate1", 20090615), // 30 day month
     record()
-      .value("alfaDate1", "20090131"), // last day of month
+      .setInteger("alfaDate1", 20090131), // last day of month
     record()
-      .value("alfaDate1", "20080201"), // leap year
+      .setInteger("alfaDate1", 20080201), // leap year
     record()
-      .value("alfaDate1", "20000201"), // leap year (divisible by 100 but also divisible by 400)
+      .setInteger("alfaDate1", 20000201), // leap year (divisible by 100 but also divisible by 400)
     record()
-      .value("alfaDate1", "21000201") // not leap year (divisible by 100 but not divisible by 400)
+      .setInteger("alfaDate1", 21000201) // not leap year (divisible by 100 but not divisible by 400)
     )
     .table("CoalesceTable",
       record()
-        .value("column1", null)
-        .value("column2", null)
-        .value("column3", "5")
-        .value("column4", "Pumpkin")
-        .value("column5", null),
+        .setString("column1", null)
+        .setString("column2", null)
+        .setString("column3", "5")
+        .setString("column4", "Pumpkin")
+        .setString("column5", null),
       record()
-        .value("column1", null)
-        .value("column2", "7")
-        .value("column3", "3")
-        .value("column4", "Green")
-        .value("column5", "Man")
+        .setString("column1", null)
+        .setString("column2", "7")
+        .setString("column3", "3")
+        .setString("column4", "Green")
+        .setString("column5", "Man")
     )
     .table("BooleanTable",
       record()
-        .value("column1", "false")
-        .value("column2", "true")
+        .setBoolean("column1", false)
+        .setBoolean("column2", true)
+    )
+    .table("AccumulateBooleanTable",
+      record()
+        .setBoolean("column1", false)
+        .setBoolean("column2", true),
+      record()
+        .setBoolean("column1", true)
+        .setBoolean("column2", true)
     )
     .table("LeftAndRightTrimTable",
       record()
-        .value("indexColumn", "1")
-        .value("stringColumn", "hello world"),
+        .setInteger("indexColumn", 1)
+        .setString("stringColumn", "hello world"),
       record()
-        .value("indexColumn", "2")
-        .value("stringColumn", "test string     "),
+        .setInteger("indexColumn", 2)
+        .setString("stringColumn", "test string     "),
       record()
-        .value("indexColumn", "3")
-        .value("stringColumn", "     purple flowers     "),
+        .setInteger("indexColumn", 3)
+        .setString("stringColumn", "     purple flowers     "),
       record()
-        .value("indexColumn", "4")
-        .value("stringColumn", "     pancakes")
+        .setInteger("indexColumn", 4)
+        .setString("stringColumn", "     pancakes")
     )
     .table("OrderByNullsLastTable",
       record()
-        .value("field1", "1")
-        .value("field2", null),
+        .setInteger("field1", 1)
+        .setString("field2", null),
       record()
-        .value("field1", "1")
-        .value("field2", "2"),
+        .setInteger("field1", 1)
+        .setString("field2", "2"),
       record()
-        .value("field1", null)
-        .value("field2", "3"),
+        .setInteger("field1", null)
+        .setString("field2", "3"),
       record()
-        .value("field1", null)
-        .value("field2", null),
+        .setInteger("field1", null)
+        .setString("field2", null),
       record()
-        .value("field1", "3")
-        .value("field2", "3"),
+        .setInteger("field1", 3)
+        .setString("field2", "3"),
       record()
-        .value("field1", "3")
-        .value("field2", "4")
+        .setInteger("field1", 3)
+        .setString("field2", "4")
     )
     .table("SelectFirstTable",
       record()
-        .value("field1", "1")
-        .value("field2", "2"),
+        .setInteger("field1", 1)
+        .setString("field2", "2"),
       record()
-        .value("field1", "2")
-        .value("field2", "2"),
+        .setInteger("field1", 2)
+        .setString("field2", "2"),
       record()
-        .value("field1", "2")
-        .value("field2", "3"),
+        .setInteger("field1", 2)
+        .setString("field2", "3"),
       record()
-        .value("field1", "3")
-        .value("field2", "3"),
+        .setInteger("field1", 3)
+        .setString("field2", "3"),
       record()
-        .value("field1", "3")
-        .value("field2", "4"),
+        .setInteger("field1", 3)
+        .setString("field2", "4"),
       record()
-        .value("field1", "5")
-        .value("field2", "4")
+        .setInteger("field1", 5)
+        .setString("field2", "4")
     )
     .table("LeftPaddingTable",
       record()
-        .value("id", "1")
-        .value("invoiceNumber", "Invoice100"),
+        .setInteger("id", 1)
+        .setString("invoiceNumber", "Invoice100"),
       record()
-        .value("id", "2")
-        .value("invoiceNumber", "BigInvoiceNumber1000"),
+        .setInteger("id", 2)
+        .setString("invoiceNumber", "BigInvoiceNumber1000"),
       record()
-        .value("id", "3")
-        .value("invoiceNumber", "ExactFifteeeeen")
+        .setInteger("id", 3)
+        .setString("invoiceNumber", "ExactFifteeeeen")
     )
     .table("AutoNumbered",
       record()
-        .value("surrogateKey", "3")
-        .value("column2", "c"),
+        .setInteger("surrogateKey", 3)
+        .setString("column2", "c"),
       record()
-        .value("surrogateKey", "2")
-        .value("column2", "d")
+        .setInteger("surrogateKey", 2)
+        .setString("column2", "d")
     )
     .table("WithDefaultValue",
       record()
-        .value("id", "1")
-        .value("version", "6"),
+        .setInteger("id", 1)
+        .setInteger("version", 6),
       record()
-        .value("id", "2")
-        .value("version", "6")
+        .setInteger("id", 2)
+        .setInteger("version", 6)
     )
     .table("ActualDates",
       record()
-        .value("actualDate", "1899-01-01")
-        .value("actualDateNullable", "9999-12-31"),
+        .setDate("actualDate", java.sql.Date.valueOf("1899-01-01"))
+        .setDate("actualDateNullable", java.sql.Date.valueOf("9999-12-31")),
       record()
-        .value("actualDate", "1995-10-23")
+        .setDate("actualDate", java.sql.Date.valueOf("1995-10-23"))
         )
     .table("MergeSource",
       record()
-        .value("columnA", "100")
-        .value("columnB", "200"),
+        .setInteger("columnA", 100)
+        .setInteger("columnB", 200),
       record()
-        .value("columnA", "500")
-        .value("columnB", "999")
+        .setInteger("columnA", 500)
+        .setInteger("columnB", 999)
      )
     .table("MergeTable",
       record()
-        .value("column1", "500")
-        .value("column2", "800")
+        .setInteger("column1", 500)
+        .setInteger("column2", 800)
     )
     .table("MergeSourceMultipleKeys",
       record()
-        .value("columnA", "100")
-        .value("columnB", "200")
-        .value("columnC", "Inserted"),
+        .setInteger("columnA", 100)
+        .setInteger("columnB", 200)
+        .setString("columnC", "Inserted"),
       record()
-        .value("columnA", "500")
-        .value("columnB", "800")
-        .value("columnC", "Updated")
+        .setInteger("columnA", 500)
+        .setInteger("columnB", 800)
+        .setString("columnC", "Updated")
      )
     .table("MergeTableMultipleKeys",
       record()
-        .value("autoNum", "33")
-        .value("column1", "500")
-        .value("column2", "800")
-        .value("column3", "Incorrect")
+        .setInteger("autoNum", 33)
+        .setInteger("column1", 500)
+        .setInteger("column2", 800)
+        .setString("column3", "Incorrect")
      )
     .table("MergeSourceJoinTable",
       record()
-        .value("field1", "100")
-        .value("field2", "999")
-        .value("field3", "Asset")
+        .setInteger("field1", 100)
+        .setInteger("field2", 999)
+        .setString("field3", "Asset")
      )
     .table("ParameterTable",
       record()
-        .value("parameterCode", "Test")
-        .value("parameterValue", "0")
+        .setString("parameterCode", "Test")
+        .setInteger("parameterValue", 0)
      )
     .table("LowerAndUpperTable",
       record()
-        .value("id", "1")
-        .value("firstName", "LuDWig vAn")
-        .value("lastName", "BEEthoven"),
+        .setInteger("id", 1)
+        .setString("firstName", "LuDWig vAn")
+        .setString("lastName", "BEEthoven"),
       record()
-        .value("id", "2")
-        .value("firstName", "WolfGANG amaDEUS")
-        .value("lastName", "MoZArt"),
+        .setInteger("id", 2)
+        .setString("firstName", "WolfGANG amaDEUS")
+        .setString("lastName", "MoZArt"),
       record()
-        .value("id", "3")
-        .value("firstName", "joHANN sEbAsTiAn")
-        .value("lastName", "Bach")
+        .setInteger("id", 3)
+        .setString("firstName", "joHANN sEbAsTiAn")
+        .setString("lastName", "Bach")
      )
      .table("MergeAllKeys",
        record()
-       .value("key1", "1")
-       .value("key2", "2"),
+       .setInteger("key1", 1)
+       .setInteger("key2", 2),
       record()
-        .value("key1", "100")
-        .value("key2", "200")
+        .setInteger("key1", 100)
+        .setInteger("key2", 200)
      )
      .table("ParamStatementsTest",
        record()
-       .value("one", "0")
-       .value("two", "bla"))
+       .setInteger("one", 0)
+       .setString("two", "bla"))
     .table("LikeTest",
-      record().value("column1", "xxxxxxx"),
-      record().value("column1", "1xxxxxx"),
-      record().value("column1", "xxxxxx2"),
-      record().value("column1", "xxx3xxx"),
-      record().value("column1", "4xxxxx5"),
-      record().value("column1", "xxx*xxx"),
-      record().value("column1", "xxx%xxx"))
+      record().setString("column1", "xxxxxxx"),
+      record().setString("column1", "1xxxxxx"),
+      record().setString("column1", "xxxxxx2"),
+      record().setString("column1", "xxx3xxx"),
+      record().setString("column1", "4xxxxx5"),
+      record().setString("column1", "xxx*xxx"),
+      record().setString("column1", "xxx%xxx"))
     .table("MergeSelectDistinctTable",
       record()
-        .value("column1", "<None>")
-        .value("column2", "-100"))
+        .setString("column1", "<None>")
+        .setInteger("column2", -100))
     .table("SelectDistinctTable",
       record()
-        .value("id", "1")
-        .value("column1", "TEST1")
-        .value("column2", "1"),
+        .setInteger("id", 1)
+        .setString("column1", "TEST1")
+        .setInteger("column2", 1),
       record()
-        .value("id", "2")
-        .value("column1", "TEST2")
-        .value("column2", "1"))
+        .setInteger("id", 2)
+        .setString("column1", "TEST2")
+        .setInteger("column2", 1))
     .table("SelectDistinctJoinTable",
       record()
-        .value("id", "1")
-        .value("column1", "10")
-        .value("foreignKeyId", "1"),
+        .setInteger("id", 1)
+        .setInteger("column1", 10)
+        .setInteger("foreignKeyId", 1),
       record()
-        .value("id", "2")
-        .value("column1", "11")
-        .value("foreignKeyId", "1"),
+        .setInteger("id", 2)
+        .setInteger("column1", 11)
+        .setInteger("foreignKeyId", 1),
       record()
-        .value("id", "3")
-        .value("column1", "12")
-        .value("foreignKeyId", "1"),
+        .setInteger("id", 3)
+        .setInteger("column1", 12)
+        .setInteger("foreignKeyId", 1),
       record()
-        .value("id", "4")
-        .value("column1", "5")
-        .value("foreignKeyId", "2"))
+        .setInteger("id", 4)
+        .setInteger("column1", 5)
+        .setInteger("foreignKeyId", 2))
      .table("InsertSelectDistinctTable",
       record()
-        .value("column1", "<None>")
-        .value("column2", "-100"))
+        .setString("column1", "<None>")
+        .setInteger("column2", -100))
      .table("NumericTable",
        record()
-         .value("decimalColumn", "923764237.23")
-         .value("integerColumn", "232131"),
+         .setString("decimalColumn", "923764237.23")
+         .setInteger("integerColumn", 232131),
        record()
-         .value("decimalColumn", "123456789.3")
-         .value("integerColumn", "2132131"),
+         .setString("decimalColumn", "123456789.3")
+         .setInteger("integerColumn", 2132131),
        record()
-         .value("decimalColumn", "4237.43")
-         .value("integerColumn", "212131"),
+         .setString("decimalColumn", "4237.43")
+         .setInteger("integerColumn", 212131),
        record()
-         .value("decimalColumn", "92337.29")
-         .value("integerColumn", "21323"),
+         .setString("decimalColumn", "92337.29")
+         .setInteger("integerColumn", 21323),
        record()
-         .value("decimalColumn", "92376427.13")
-         .value("integerColumn", "213231")
+         .setString("decimalColumn", "92376427.13")
+         .setInteger("integerColumn", 213231)
       )
      .table("InsertTargetTable")
      .table("WindowFunctionTable",
        record()
-         .value("id", "1")
-         .value("partitionValue1", "A")
-         .value("partitionValue2", "Z")
-         .value("aggregationValue", "2.1"),
+         .setInteger("id", 1)
+         .setString("partitionValue1", "A")
+         .setString("partitionValue2", "Z")
+         .setString("aggregationValue", "2.1"),
        record()
-         .value("id", "2")
-         .value("partitionValue1", "A")
-         .value("partitionValue2", "Y")
-         .value("aggregationValue", "3.2"),
+         .setInteger("id", 2)
+         .setString("partitionValue1", "A")
+         .setString("partitionValue2", "Y")
+         .setString("aggregationValue", "3.2"),
        record()
-         .value("id", "6")
-         .value("partitionValue1", "B")
-         .value("partitionValue2", "Z")
-         .value("aggregationValue", "3.4"),
+         .setInteger("id", 6)
+         .setString("partitionValue1", "B")
+         .setString("partitionValue2", "Z")
+         .setString("aggregationValue", "3.4"),
        record()
-         .value("id", "3")
-         .value("partitionValue1", "B")
-         .value("partitionValue2", "Z")
-         .value("aggregationValue", "5.7"),
+         .setInteger("id", 3)
+         .setString("partitionValue1", "B")
+         .setString("partitionValue2", "Z")
+         .setString("aggregationValue", "5.7"),
        record()
-         .value("id", "4")
-         .value("partitionValue1", "A")
-         .value("partitionValue2", "Y")
-         .value("aggregationValue", "3.8"),
+         .setInteger("id", 4)
+         .setString("partitionValue1", "A")
+         .setString("partitionValue2", "Y")
+         .setString("aggregationValue", "3.8"),
        record()
-         .value("id", "5")
-         .value("partitionValue1", "A")
-         .value("partitionValue2", "Z")
-         .value("aggregationValue", "1.9"),
+         .setInteger("id", 5)
+         .setString("partitionValue1", "A")
+         .setString("partitionValue2", "Z")
+         .setString("aggregationValue", "1.9"),
        record()
-         .value("id", "7")
-         .value("partitionValue1", "B")
-         .value("partitionValue2", "Y")
-         .value("aggregationValue", "10.2")
+         .setInteger("id", 7)
+         .setString("partitionValue1", "B")
+         .setString("partitionValue2", "Y")
+         .setString("aggregationValue", "10.2")
        );
 
 
@@ -675,7 +703,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
     // We don't want to inherit some old sequence numbers on existing tables
     // therefore we simply drop any tables with auto-numbering on them
     schemaManager.get().dropTablesIfPresent(ImmutableSet.of("Autonumbered", "MergeTableMultipleKeys"));
-    schemaManager.get().mutateToSupportSchema(schema, TruncationBehavior.ALWAYS);
+    // no need to truncate the tables, the connector does that anyway
+    schemaManager.get().mutateToSupportSchema(schema, TruncationBehavior.ONLY_ON_TABLE_CHANGE);
     new DataSetConnector(dataSet, databaseDataSetConsumer.get()).connect();
 
     connection = dataSource.getConnection();
@@ -1027,7 +1056,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
       new FieldLiteral(9817236).as("decimalTenZeroCol"),
       new FieldLiteral(278.231).as("decimalNineFiveCol"),
       new FieldLiteral("1234567890123456", DataType.DECIMAL).as("bigIntegerCol"),
-      new FieldLiteral("56732", DataType.DECIMAL).as("nullableBigIntegerCol")
+      new FieldLiteral("56732", DataType.DECIMAL).as("nullableBigIntegerCol"),
+      nullLiteral().as("nullableBlobCol")
     ).from(simpleTypes)
     .where(whereStringCol)
     .groupBy(field("stringCol"))
@@ -2063,6 +2093,35 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
 
 
   /**
+   * Test behaviour of the length-of-blob function
+   *
+   * @throws SQLException
+   */
+  @Test
+  public void testBlobLength() throws SQLException {
+    // Key value
+    final byte[] value = "hello world BLOB".getBytes();
+
+    SqlScriptExecutor executor = sqlScriptExecutorProvider.get(new LoggingSqlScriptVisitor());
+    String sql = convertStatementToSQL(select(field("blobCol"), length(field("blobCol")).as("lengthResult"))
+                                                                        .from(tableRef("SimpleTypes"))
+                                                                        .orderBy(field("lengthResult")));
+
+    executor.executeQuery(sql, connection, new ResultSetProcessor<Void>(){
+      @Override
+      public Void process(ResultSet resultSet) throws SQLException {
+        while (resultSet.next()) {
+          assertArrayEquals(value, resultSet.getBytes(1));
+          assertEquals(value.length, resultSet.getInt(2));
+        }
+        return null;
+      }
+
+    });
+  }
+
+
+  /**
    * Test behaviour of the MOD function
    *
    * @throws SQLException
@@ -2221,21 +2280,22 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
           select(
             parameter("column1").type(DataType.INTEGER),
             parameter("column2").type(DataType.INTEGER),
-            parameter("column3").type(DataType.STRING).width(0)
+            parameter("column3").type(DataType.STRING).width(0),
+            parameter("parameterValue").type(DataType.STRING).as("column4")
           )
         );
     NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sqlDialect.convertStatementToSQL(merge)).createFor(connection);
     try {
 
       // Put in two records.  The first should merge with the initial data set.
-      preparedStatementRecord(sqlDialect, preparedStatement, "500", "800", "Correct");
-      preparedStatementRecord(sqlDialect, preparedStatement, "101", "201", "301");
+      preparedStatementRecord(sqlDialect, preparedStatement, 500, 800, "Correct", "Updated");
+      preparedStatementRecord(sqlDialect, preparedStatement, 101, 201, "301", "401");
       if (sqlDialect.useInsertBatching()) {
         preparedStatement.executeBatch();
       }
 
       // Check we have what we expect
-      SelectStatement statement = select(field("column1"), field("column2"), field("column3")).from(tableRef("MergeTableMultipleKeys")).orderBy(field("autoNum"));
+      SelectStatement statement = select(field("column1"), field("column2"), field("column3"), field("column4")).from(tableRef("MergeTableMultipleKeys")).orderBy(field("autoNum"));
       String sql = convertStatementToSQL(statement);
       sqlScriptExecutorProvider.get().executeQuery(sql, connection, new ResultSetProcessor<Void>() {
         @Override
@@ -2244,10 +2304,12 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
           assertEquals("Row 1 column 1", 500, resultSet.getInt(1));
           assertEquals("Row 1 column 2", 800, resultSet.getInt(2));
           assertEquals("Row 1 column 3", "Correct", resultSet.getString(3));
+          assertEquals("Row 1 column 4", "Updated", resultSet.getString(4));
           assertTrue("No record 2", resultSet.next());
           assertEquals("Row 2 column 1", 101, resultSet.getInt(1));
           assertEquals("Row 2 column 2", 201, resultSet.getInt(2));
           assertEquals("Row 2 column 3", "301", resultSet.getString(3));
+          assertEquals("Row 2 column 4", "401", resultSet.getString(4));
           assertFalse("Noo many records", resultSet.next());
           return null;
         }
@@ -2269,10 +2331,11 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
     SqlParameter column1 = parameter("column1").type(DataType.INTEGER);
     SqlParameter column2 = parameter("column2").type(DataType.INTEGER);
     SqlParameter column3 = parameter("column3").type(DataType.STRING).width(0);
+    AliasedField column4 = parameter("parameterValue").type(DataType.STRING).as("column4");
 
     SqlDialect sqlDialect = connectionResources.sqlDialect();
     UpdateStatement update = update(tableRef("MergeTableMultipleKeys"))
-        .set(column2, column3)
+        .set(column2, column3, column4)
         .where(field("column1").eq(column1));
     ParseResult parsed = NamedParameterPreparedStatement.parse(sqlDialect.convertStatementToSQL(update));
 
@@ -2282,10 +2345,11 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
       preparedStatement.setInt(column1, 500)
                        .setInt(column2, 801)
                        .setString(column3, "Correct")
+                       .setString(parameter("parameterValue").type(DataType.STRING), "Updated")
                        .executeUpdate();
 
       // Check we have what we expect
-      SelectStatement statement = select(field("column1"), field("column2"), field("column3")).from(tableRef("MergeTableMultipleKeys")).orderBy(field("autoNum"));
+      SelectStatement statement = select(field("column1"), field("column2"), field("column3"), field("column4")).from(tableRef("MergeTableMultipleKeys")).orderBy(field("autoNum"));
       String sql = convertStatementToSQL(statement);
       sqlScriptExecutorProvider.get().executeQuery(sql, connection, new ResultSetProcessor<Void>() {
         @Override
@@ -2294,6 +2358,7 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
           assertEquals("Row 1 column 1", 500, resultSet.getInt(1));
           assertEquals("Row 1 column 2", 801, resultSet.getInt(2));
           assertEquals("Row 1 column 3", "Correct", resultSet.getString(3));
+          assertEquals("Row 1 column 4", "Updated", resultSet.getString(4));
           assertFalse("Noo many records", resultSet.next());
           return null;
         }
@@ -2312,8 +2377,10 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
   public void testParameterisedSelect() throws SQLException {
     SqlDialect sqlDialect = connectionResources.sqlDialect();
     SelectStatement select = select(
-          field("field1"), field("field2"), literal(":justtomesswithyou") // just to confuse it - should be treated
-                                                                          // as a string
+          field("field1"),
+          field("field2"),
+          literal(":justtomesswithyou"), // just to confuse it - should be treated as a string
+          parameter("param3").type(DataType.INTEGER).as("field3")
         )
         .from("SelectFirstTable")
         .where(field("field1").in(
@@ -2326,21 +2393,34 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
     NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sqlDialect.convertStatementToSQL(select)).createForQueryOn(connection);
     try {
       preparedStatement.setFetchSize(sqlDialect.fetchSizeForBulkSelects());
-      sqlDialect.prepareStatementParameter(preparedStatement, parameter("param1").type(INTEGER), "1"); // 1 + 1 = 2
-      sqlDialect.prepareStatementParameter(preparedStatement, parameter("param2").type(INTEGER), "5");
+      sqlDialect.prepareStatementParameters(
+        preparedStatement,
+        ImmutableList.of(
+          parameter("param1").type(INTEGER),
+          parameter("param2").type(INTEGER),
+          parameter("param3").type(INTEGER)
+        ),
+        DataSetUtils.statementParameters()
+          .setInteger("param1", 1) // 1 + 1 = 2
+          .setInteger("param2", 5)
+          .setInteger("param3", 7)
+      );
       ResultSet resultSet = preparedStatement.executeQuery();
       assertTrue("No record 1", resultSet.next());
       assertEquals("Row 1 column 1", 2, resultSet.getInt(1));
       assertEquals("Row 1 column 2", 2, resultSet.getInt(2));
       assertEquals("Row 1 column 3", ":justtomesswithyou", resultSet.getString(3));
+      assertEquals("Row 1 column 4", 7, resultSet.getInt(4));
       assertTrue("No record 2", resultSet.next());
       assertEquals("Row 2 column 1", 2, resultSet.getInt(1));
       assertEquals("Row 2 column 2", 3, resultSet.getInt(2));
       assertEquals("Row 2 column 3", ":justtomesswithyou", resultSet.getString(3));
+      assertEquals("Row 2 column 4", 7, resultSet.getInt(4));
       assertTrue("No record 3", resultSet.next());
       assertEquals("Row 3 column 1", 5, resultSet.getInt(1));
       assertEquals("Row 3 column 2", 4, resultSet.getInt(2));
       assertEquals("Row 3 column 3", ":justtomesswithyou", resultSet.getString(3));
+      assertEquals("Row 3 column 4", 7, resultSet.getInt(4));
       assertFalse("Noo many records", resultSet.next());
     } finally {
       preparedStatement.close();
@@ -2348,10 +2428,21 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
   }
 
 
-  private void preparedStatementRecord(SqlDialect sqlDialect, NamedParameterPreparedStatement preparedStatement, String col1Value, String col2Value, String col3Value) throws SQLException {
-    sqlDialect.prepareStatementParameter(preparedStatement, parameter("column1").type(DataType.INTEGER), col1Value);
-    sqlDialect.prepareStatementParameter(preparedStatement, parameter("column2").type(DataType.INTEGER), col2Value);
-    sqlDialect.prepareStatementParameter(preparedStatement, parameter("column3").type(DataType.STRING).width(0), col3Value);
+  private void preparedStatementRecord(SqlDialect sqlDialect, NamedParameterPreparedStatement preparedStatement, Integer col1Value, Integer col2Value, String col3Value, String col4Value) throws SQLException {
+    sqlDialect.prepareStatementParameters(
+      preparedStatement,
+      ImmutableList.of(
+        parameter("column1").type(INTEGER),
+        parameter("column2").type(INTEGER),
+        parameter("column3").type(STRING),
+        parameter("parameterValue").type(STRING)
+      ),
+      DataSetUtils.statementParameters()
+        .setInteger("column1", col1Value)
+        .setInteger("column2", col2Value)
+        .setString("column3", col3Value)
+        .setString("parameterValue", col4Value)
+    );
     if (sqlDialect.useInsertBatching()) {
       preparedStatement.addBatch();
     } else {
@@ -2369,8 +2460,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
 
     SelectStatement testSelect = select(field("alfaDate1"), field("alfaDate2"), literal(123))
                                  .from(tableRef("DateTable")).where(eq(field("alfaDate1"), parameter("firstDateParam").type(DataType.BIG_INTEGER)));;
-    Iterable<SqlParameter> parameterMetadata = ImmutableList.of(parameter(column("firstDateParam", DataType.STRING)));
-    RecordBuilder parameterData = DataSetUtils.record().value("firstDateParam", "20040609");
+    Iterable<SqlParameter> parameterMetadata = ImmutableList.of(parameter(column("firstDateParam", DataType.DECIMAL)));
+    RecordBuilder parameterData = DataSetUtils.record().setLong("firstDateParam", 20040609L);
     ResultSetProcessor<List<List<String>>> resultSetProcessor = new ResultSetProcessor<List<List<String>>>() {
       /**
        * Takes all rows and puts into two-dimension String array.
@@ -2447,7 +2538,17 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
       @Override
       public Void process(ResultSet resultSet) throws SQLException {
         resultSet.next();
-        assertNotNull("Date value", resultSet.getDate(1));
+
+        final long maximumDifferenceMillis = 2000;
+        final Instant currentSystemTime = Clock.systemUTC().instant();
+        final Instant databaseTime = resultSet.getTimestamp(1).toInstant();
+        final long differenceMillis = Duration.between(currentSystemTime, databaseTime).abs().toMillis();
+
+        log.info("Current system time: " + currentSystemTime + ". Current database time: " + databaseTime);
+
+        //Assert that the time of the database and system are accurate within 2 s.
+        assertTrue("Database and system times don't match to within 2 s, the difference is " + differenceMillis + " ms. "
+            + "This could be because of different timezones.", differenceMillis <= maximumDifferenceMillis);
         assertFalse("More than one record", resultSet.next());
         return null;
       }
@@ -2467,8 +2568,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
     assertEquals(1, sqlScriptExecutorProvider.get().execute(
       insertStatement, connection,
       insertStatementParams,
-      DataSetUtils.record().value("one", "1")
-          .value("two", "two")));
+      DataSetUtils.record().setInteger("one", 1)
+          .setString("two", "two")));
 
     SelectStatement select = select(
       count().as("a"),
@@ -2511,8 +2612,8 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
 
     for (int i = 0 ; i < 20 ; i++) {
       sqlScriptExecutorProvider.get().execute(sql, connection, params,
-        record().value("parameterCode", "KEY" + i)
-                .value("parameterValue", Integer.toString(i))
+        record().setString("parameterCode", "KEY" + i)
+                .setInteger("parameterValue", i)
       );
     }
     checkMaxRows(select, 10);
@@ -2937,6 +3038,74 @@ public class TestSqlStatements { //CHECKSTYLE:OFF
         .from(tableRef("WindowFunctionTable")),
 
       "7-30.3","7-30.3","7-30.3","7-30.3","7-30.3","7-30.3","7-30.3");
+  }
+
+
+  /**
+   * Tests behaviour of the Every function
+   */
+  @Test
+  public void testEveryFunction() {
+    SelectStatement selectEvery =
+        select(
+          every(field("column1")).as("column1Every"),
+          every(field("column2")).as("column2Every"))
+        .from("AccumulateBooleanTable");
+    sqlScriptExecutorProvider.get().executeQuery(selectEvery).processWith(new ResultSetProcessor<Void>() {
+      @Override
+      public Void process(ResultSet resultSet) throws SQLException {
+        while (resultSet.next()) {
+          assertEquals("Aggregated Every value of column1 should be", false, resultSet.getBoolean(1));
+          assertEquals("Aggregated Every value of column2 should be", true, resultSet.getBoolean(2));
+        }
+        return null;
+      }
+    });
+  }
+
+
+  /**
+   * Tests behaviour of the Some function
+   */
+  @Test
+  public void testSomeFunction() {
+    SelectStatement selectSome =
+        select(
+          some(field("column1")).as("column1Every"),
+          some(field("column2")).as("column2Every"))
+        .from("AccumulateBooleanTable");
+    sqlScriptExecutorProvider.get().executeQuery(selectSome).processWith(new ResultSetProcessor<Void>() {
+      @Override
+      public Void process(ResultSet resultSet) throws SQLException {
+        while (resultSet.next()) {
+          assertEquals("Aggregated Some value of column1 should be", true, resultSet.getBoolean(1));
+          assertEquals("Aggregated Some value of column2 should be", true, resultSet.getBoolean(2));
+        }
+        return null;
+      }
+    });
+  }
+
+
+  /**
+   * Tests behaviour of Some function with a case statement as the argument.
+   */
+  @Test
+  public void testSomeFunctionWithACaseStatement() {
+    CaseStatement caseStmt = SqlUtils.caseStatement(
+      when(cast(field("id")).asType(INTEGER).lessThanOrEqualTo(literal(1))).then(true))
+        .otherwise(false);
+    SelectStatement selectComplexSome = select(some(caseStmt), every(caseStmt)).from(tableRef("WithDefaultValue"));
+    sqlScriptExecutorProvider.get().executeQuery(selectComplexSome).processWith(new ResultSetProcessor<Void>() {
+      @Override
+      public Void process(ResultSet resultSet) throws SQLException {
+        while (resultSet.next()) {
+        assertEquals("Aggregated value of id should be", true, resultSet.getBoolean(1));
+        assertEquals("Aggregated value of id should be", false, resultSet.getBoolean(2));
+      }
+      return null;
+      }
+    });
   }
 
 

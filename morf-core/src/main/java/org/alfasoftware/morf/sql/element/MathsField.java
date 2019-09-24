@@ -15,6 +15,8 @@
 
 package org.alfasoftware.morf.sql.element;
 
+import static org.alfasoftware.morf.sql.SqlUtils.bracket;
+
 import org.alfasoftware.morf.util.DeepCopyTransformation;
 import org.alfasoftware.morf.util.ObjectTreeTraverser;
 import org.alfasoftware.morf.util.ObjectTreeTraverser.Driver;
@@ -51,7 +53,14 @@ public class MathsField extends AliasedField implements Driver {
    */
   public MathsField(AliasedField leftField, MathsOperator operator, AliasedField rightField) {
     super();
+    this.leftField = leftField;
+    this.operator = operator;
+    this.rightField = rightField;
+  }
 
+
+  private MathsField(String alias, AliasedField leftField, MathsOperator operator, AliasedField rightField) {
+    super(alias);
     this.leftField = leftField;
     this.operator = operator;
     this.rightField = rightField;
@@ -83,41 +92,88 @@ public class MathsField extends AliasedField implements Driver {
 
 
   /**
-   * {@inheritDoc}
-   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal()
+   * @see org.alfasoftware.morf.sql.element.AliasedField#deepCopyInternal(DeepCopyTransformation)
    */
   @Override
   protected AliasedField deepCopyInternal(DeepCopyTransformation transformer) {
-    return new MathsField( transformer.deepCopy(leftField), operator, transformer.deepCopy(rightField));
+    return new MathsField(this.getAlias(), transformer.deepCopy(leftField), operator, transformer.deepCopy(rightField));
+  }
+
+
+  @Override
+  protected AliasedField shallowCopy(String aliasName) {
+    return new MathsField(aliasName, leftField, operator, rightField);
   }
 
 
   /**
    * Provides the plus operation for SQL.
+   * @param leftField left addendum
+   * @param rightField right addendum
+   * @return The function representing the sum
    */
   public static MathsField plus(AliasedField leftField, AliasedField rightField ) {
-    AliasedField rightOperand = rightField instanceof MathsField ? new BracketedExpression((MathsField)rightField) : rightField;
+    AliasedField rightOperand = rightField instanceof MathsField ? bracket((MathsField)rightField) : rightField;
     return new MathsField(leftField, MathsOperator.PLUS, rightOperand);
   }
 
 
   /**
    * Provides the multiply operation for SQL.
+   * @param leftField left multiplier
+   * @param rightField right multiplier
+   * @return The function representing the product
    */
   public static MathsField multiply(AliasedField leftField, AliasedField rightField ) {
-    AliasedField rightOperand = rightField instanceof MathsField ? new BracketedExpression((MathsField)rightField) : rightField;
+    AliasedField rightOperand = rightField instanceof MathsField ? bracket((MathsField)rightField) : rightField;
     return new MathsField(leftField, MathsOperator.MULTIPLY, rightOperand);
   }
 
 
   /**
-   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(org.alfasoftware.morf.sql.ObjectTreeTraverser.VisitorDispatcher)
+   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(ObjectTreeTraverser)
    */
   @Override
   public void drive(ObjectTreeTraverser traverser) {
     traverser
       .dispatch(getLeftField())
       .dispatch(getRightField());
+  }
+
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((leftField == null) ? 0 : leftField.hashCode());
+    result = prime * result + ((operator == null) ? 0 : operator.hashCode());
+    result = prime * result + ((rightField == null) ? 0 : rightField.hashCode());
+    return result;
+  }
+
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj)
+      return true;
+    if (!super.equals(obj))
+      return false;
+    if (getClass() != obj.getClass())
+      return false;
+    MathsField other = (MathsField) obj;
+    if (leftField == null) {
+      if (other.leftField != null)
+        return false;
+    } else if (!leftField.equals(other.leftField))
+      return false;
+    if (operator != other.operator)
+      return false;
+    if (rightField == null) {
+      if (other.rightField != null)
+        return false;
+    } else if (!rightField.equals(other.rightField))
+      return false;
+    return true;
   }
 
 

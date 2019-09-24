@@ -20,12 +20,15 @@ import static org.alfasoftware.morf.jdbc.ResultSetMismatch.MismatchType.MISSING_
 import static org.alfasoftware.morf.jdbc.ResultSetMismatch.MismatchType.MISSING_RIGHT;
 import static org.alfasoftware.morf.metadata.DataSetUtils.dataSetProducer;
 import static org.alfasoftware.morf.metadata.DataSetUtils.record;
+import static org.alfasoftware.morf.metadata.DataType.INTEGER;
+import static org.alfasoftware.morf.metadata.DataType.STRING;
 import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static org.alfasoftware.morf.metadata.SchemaUtils.schema;
 import static org.alfasoftware.morf.metadata.SchemaUtils.table;
 import static org.alfasoftware.morf.sql.SqlUtils.cast;
 import static org.alfasoftware.morf.sql.SqlUtils.field;
 import static org.alfasoftware.morf.sql.SqlUtils.literal;
+import static org.alfasoftware.morf.sql.SqlUtils.parameter;
 import static org.alfasoftware.morf.sql.SqlUtils.select;
 import static org.alfasoftware.morf.sql.SqlUtils.tableRef;
 import static org.alfasoftware.morf.sql.element.Function.count;
@@ -53,8 +56,10 @@ import org.alfasoftware.morf.jdbc.ResultSetComparer;
 import org.alfasoftware.morf.jdbc.ResultSetComparer.CompareCallback;
 import org.alfasoftware.morf.jdbc.ResultSetMismatch;
 import org.alfasoftware.morf.jdbc.ResultSetMismatch.MismatchType;
+import org.alfasoftware.morf.metadata.DataSetUtils;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Schema;
+import org.alfasoftware.morf.metadata.StatementParameters;
 import org.alfasoftware.morf.sql.SelectStatement;
 import org.alfasoftware.morf.stringcomparator.TestingDatabaseEquivalentStringComparator;
 import org.alfasoftware.morf.testing.DatabaseSchemaManager;
@@ -205,148 +210,148 @@ public class TestResultSetComparer {
   private final DataSetProducer dataSet = dataSetProducer(schema)
     .table("SingleKeyLeft",
       record()
-        .value("stringKey", "keyA")
-        .value("nullableDateCol", "20140101")
-        .value("nullableDecimalCol", "10.11")
-        .value("booleanCol", "false"),
+        .setString("stringKey", "keyA")
+        .setInteger("nullableDateCol", 20140101)
+        .setString("nullableDecimalCol", "10.11")
+        .setBoolean("booleanCol", false),
       record()
-        .value("stringKey", "keyB")
-        .value("nullableDateCol", "20140201")
-        .value("nullableDecimalCol", "10.2")
-        .value("booleanCol", "true"),
+        .setString("stringKey", "keyB")
+        .setInteger("nullableDateCol", 20140201)
+        .setString("nullableDecimalCol", "10.2")
+        .setBoolean("booleanCol", true),
       record()
-        .value("stringKey", "keyC")
-        .value("nullableDateCol", "20140301")
-        .value("nullableDecimalCol", "10.3")
-        .value("booleanCol", "false")
+        .setString("stringKey", "keyC")
+        .setInteger("nullableDateCol", 20140301)
+        .setString("nullableDecimalCol", "10.3")
+        .setBoolean("booleanCol", false)
     )
     .table("SingleKeyMatchRight",
       record()
-        .value("stringKey", "keyA")
-        .value("nullableDateCol", "20140101")
-        .value("nullableDecimalCol", "10.11"),
+        .setString("stringKey", "keyA")
+        .setInteger("nullableDateCol", 20140101)
+        .setString("nullableDecimalCol", "10.11"),
       record()
-        .value("stringKey", "keyB")
-        .value("nullableDateCol", "20140201")
-        .value("nullableDecimalCol", "10.2"),
+        .setString("stringKey", "keyB")
+        .setInteger("nullableDateCol", 20140201)
+        .setString("nullableDecimalCol", "10.2"),
       record()
-        .value("stringKey", "keyC")
-        .value("nullableDateCol", "20140301")
-        .value("nullableDecimalCol", "10.3")
+        .setString("stringKey", "keyC")
+        .setInteger("nullableDateCol", 20140301)
+        .setString("nullableDecimalCol", "10.3")
     )
     .table("SingleKeyMismatchRight",
       record()
-        .value("stringKey", "keyA")
-        .value("nullableDateCol", "20141101")
-        .value("nullableDecimalCol", "11.1"),
+        .setString("stringKey", "keyA")
+        .setInteger("nullableDateCol", 20141101)
+        .setString("nullableDecimalCol", "11.1"),
       record()
-        .value("stringKey", "keyB")
-        .value("nullableDateCol", "20140201")
-        .value("nullableDecimalCol", "10.2")
+        .setString("stringKey", "keyB")
+        .setInteger("nullableDateCol", 20140201)
+        .setString("nullableDecimalCol", "10.2")
     )
     .table("SingleKeyNullMismatchRight",
       record()
-        .value("stringKey", "keyA")
-        .value("nullableDateCol", "20141101")
-        .value("nullableDecimalCol", null),
+        .setString("stringKey", "keyA")
+        .setInteger("nullableDateCol", 20141101)
+        .setString("nullableDecimalCol", null),
       record()
-        .value("stringKey", "keyB")
-        .value("nullableDateCol", "20140201")
-        .value("nullableDecimalCol", "10.2")
+        .setString("stringKey", "keyB")
+        .setInteger("nullableDateCol", 20140201)
+        .setString("nullableDecimalCol", "10.2")
     )
     .table("SingleKeyMissingRight",
       record()
-        .value("stringKey", "keyB")
-        .value("nullableDateCol", "20140201")
-        .value("nullableDecimalCol", "10.2"),
+        .setString("stringKey", "keyB")
+        .setInteger("nullableDateCol", 20140201)
+        .setString("nullableDecimalCol", "10.2"),
       record()
-        .value("stringKey", "keyC")
-        .value("nullableDateCol", "20140301")
-        .value("nullableDecimalCol", "10.3"),
+        .setString("stringKey", "keyC")
+        .setInteger("nullableDateCol", 20140301)
+        .setString("nullableDecimalCol", "10.3"),
       record()
-        .value("stringKey", "keyD")
-        .value("nullableDateCol", "20140401")
-        .value("nullableDecimalCol", "10.4")
+        .setString("stringKey", "keyD")
+        .setInteger("nullableDateCol", 20140401)
+        .setString("nullableDecimalCol", "10.4")
     )
     .table("MultiKeyLeft",
       record()
-        .value("stringKey", "keyA")
-        .value("intKey", "1")
-        .value("nullableStringCol", "valueA")
-        .value("nullableIntCol", "1"),
+        .setString("stringKey", "keyA")
+        .setInteger("intKey", 1)
+        .setString("nullableStringCol", "valueA")
+        .setInteger("nullableIntCol", 1),
       record()
-        .value("stringKey", "keyB")
-        .value("intKey", "2")
-        .value("nullableStringCol", null)
-        .value("nullableIntCol", "2"),
+        .setString("stringKey", "keyB")
+        .setInteger("intKey", 2)
+        .setString("nullableStringCol", null)
+        .setInteger("nullableIntCol", 2),
       record()
-        .value("stringKey", "keyC")
-        .value("intKey", "3")
-        .value("nullableStringCol", "valueC")
-        .value("nullableIntCol", "3")
+        .setString("stringKey", "keyC")
+        .setInteger("intKey", 3)
+        .setString("nullableStringCol", "valueC")
+        .setInteger("nullableIntCol", 3)
     )
     .table("MultiKeyMatchRight",
       record()
-        .value("stringKey", "keyA")
-        .value("intKey", "1")
-        .value("nullableStringCol", "valueA")
-        .value("nullableIntCol", "1"),
+        .setString("stringKey", "keyA")
+        .setInteger("intKey", 1)
+        .setString("nullableStringCol", "valueA")
+        .setInteger("nullableIntCol", 1),
       record()
-        .value("stringKey", "keyB")
-        .value("intKey", "2")
-        .value("nullableStringCol", null)
-        .value("nullableIntCol", "2"),
+        .setString("stringKey", "keyB")
+        .setInteger("intKey", 2)
+        .setString("nullableStringCol", null)
+        .setInteger("nullableIntCol", 2),
       record()
-        .value("stringKey", "keyC")
-        .value("intKey", "3")
-        .value("nullableStringCol", "valueC")
-        .value("nullableIntCol", "3")
+        .setString("stringKey", "keyC")
+        .setInteger("intKey", 3)
+        .setString("nullableStringCol", "valueC")
+        .setInteger("nullableIntCol", 3)
     )
     .table("MultiKeyMismatchRight",
       record()
-        .value("stringKey", "keyA")
-        .value("intKey", "1")
-        .value("nullableStringCol", "valueA")
-        .value("nullableIntCol", "1"),
+        .setString("stringKey", "keyA")
+        .setInteger("intKey", 1)
+        .setString("nullableStringCol", "valueA")
+        .setInteger("nullableIntCol", 1),
       record()
-        .value("stringKey", "keyB")
-        .value("intKey", "2")
-        .value("nullableStringCol", "valueFlopB")
-        .value("nullableIntCol", "2"),
+        .setString("stringKey", "keyB")
+        .setInteger("intKey", 2)
+        .setString("nullableStringCol", "valueFlopB")
+        .setInteger("nullableIntCol", 2),
       record()
-        .value("stringKey", "keyC")
-        .value("intKey", "3")
-        .value("nullableStringCol", null)
-        .value("nullableIntCol", "3")
+        .setString("stringKey", "keyC")
+        .setInteger("intKey", 3)
+        .setString("nullableStringCol", null)
+        .setInteger("nullableIntCol", 3)
     )
     .table("MultiKeyMissingRight",
       record()
-        .value("stringKey", "keyA")
-        .value("intKey", "1")
-        .value("nullableStringCol", "valueA")
-        .value("nullableIntCol", "1"),
+        .setString("stringKey", "keyA")
+        .setInteger("intKey", 1)
+        .setString("nullableStringCol", "valueA")
+        .setInteger("nullableIntCol", 1),
       record()
-        .value("stringKey", "keyB")
-        .value("intKey", "3")
-        .value("nullableStringCol", "valueB3")
-        .value("nullableIntCol", "3"),
+        .setString("stringKey", "keyB")
+        .setInteger("intKey", 3)
+        .setString("nullableStringCol", "valueB3")
+        .setInteger("nullableIntCol", 3),
       record()
-        .value("stringKey", "keyC")
-        .value("intKey", "4")
-        .value("nullableStringCol", "valueC4")
-        .value("nullableIntCol", "4")
+        .setString("stringKey", "keyC")
+        .setInteger("intKey", 4)
+        .setString("nullableStringCol", "valueC4")
+        .setInteger("nullableIntCol", 4)
     )
     .table("ComparableNumericalColumns",
       record()
-        .value("stringKey", "keyA")
-        .value("intCol", "5")
-        .value("zeroScaleDecimalCol", "1")
+        .setString("stringKey", "keyA")
+        .setInteger("intCol", 5)
+        .setString("zeroScaleDecimalCol", "1")
     )
     .table("UnComparableNumericalColumns",
       record()
-        .value("stringKey", "keyA")
-        .value("intCol", "5")
-        .value("decimalCol", "1.00")
+        .setString("stringKey", "keyA")
+        .setInteger("intCol", 5)
+        .setString("decimalCol", "1.00")
     );
 
 
@@ -355,10 +360,10 @@ public class TestResultSetComparer {
    * Oracle only and results in the metadata scale getting misreported.
    * We should be able to handle it.
    *
-   * @throws SQLException
+   * @
    */
   @Test
-  public void testAmbiguousMetadata() throws SQLException {
+  public void testAmbiguousMetadata()  {
 
     SelectStatement left = select(sum(field("a"))).from(
       select(
@@ -389,10 +394,10 @@ public class TestResultSetComparer {
   /**
    * Test compare count(*) on data sets
    *
-   * @throws SQLException
+   * @
    */
   @Test
-  public void testSingleRowResult() throws SQLException {
+  public void testSingleRowResult()  {
     SelectStatement left = select(count()).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(count()).from(tableRef("SingleKeyMatchRight"));
 
@@ -411,7 +416,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testSingleKeyValue() throws SQLException {
+  public void testSingleKeyValue()  {
     SelectStatement left = select(field("stringKey"), field("nullableDateCol")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("nullableDateCol")).from(tableRef("SingleKeyMatchRight"));
 
@@ -430,7 +435,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testMultiKeyValue() throws SQLException {
+  public void testMultiKeyValue()  {
     SelectStatement left = select(field("stringKey"), field("intKey"), field("nullableStringCol"), field("nullableIntCol")).from(tableRef("MultiKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("intKey"), field("nullableStringCol"), field("nullableIntCol")).from(tableRef("MultiKeyMatchRight"));
 
@@ -449,7 +454,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testSingleRowResultMismatch() throws SQLException {
+  public void testSingleRowResultMismatch()  {
     SelectStatement left = select(count()).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(count()).from(tableRef("SingleKeyMismatchRight"));
 
@@ -469,7 +474,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testSingleKeyValueMismatch() throws SQLException {
+  public void testSingleKeyValueMismatch()  {
     SelectStatement left = select(field("stringKey"), field("nullableDateCol"), field("nullableDecimalCol")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("nullableDateCol"), field("nullableDecimalCol")).from(tableRef("SingleKeyMismatchRight"));
 
@@ -494,7 +499,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testSingleKeyValueMismatchToNull() throws SQLException {
+  public void testSingleKeyValueMismatchToNull() {
     SelectStatement left = select(field("stringKey"), field("nullableDateCol"), field("nullableDecimalCol")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("nullableDateCol"), field("nullableDecimalCol")).from(tableRef("SingleKeyNullMismatchRight"));
 
@@ -528,7 +533,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testMultiKeyValueMismatch() throws SQLException {
+  public void testMultiKeyValueMismatch()  {
     SelectStatement left = select(field("stringKey"), field("intKey"), field("nullableStringCol"), field("nullableIntCol")).from(tableRef("MultiKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("intKey"), field("nullableStringCol"), field("nullableIntCol")).from(tableRef("MultiKeyMismatchRight"));
 
@@ -551,7 +556,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testSingleRowResultMissing() throws SQLException {
+  public void testSingleRowResultMissing()  {
     SelectStatement left = select(field("stringKey")).from(tableRef("SingleKeyLeft")).where(field("stringKey").eq("keyA"));
     SelectStatement right = select(field("stringKey")).from(tableRef("SingleKeyLeft")).where(literal("A").eq("B"));
 
@@ -571,7 +576,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testSingleKeyValueMissing() throws SQLException {
+  public void testSingleKeyValueMissing()  {
     SelectStatement left = select(field("stringKey"), field("nullableDateCol")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("nullableDateCol")).from(tableRef("SingleKeyMissingRight"));
 
@@ -594,7 +599,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testMultiKeyValueMissing() throws SQLException {
+  public void testMultiKeyValueMissing()  {
     SelectStatement left = select(field("stringKey"), field("intKey"), field("nullableStringCol"), field("nullableIntCol")).from(tableRef("MultiKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("intKey"), field("nullableStringCol"), field("nullableIntCol")).from(tableRef("MultiKeyMissingRight"));
 
@@ -623,7 +628,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testColumnTypeMismatch() throws SQLException {
+  public void testColumnTypeMismatch()  {
     SelectStatement left = select(field("stringKey")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("nullableDecimalCol")).from(tableRef("SingleKeyMismatchRight"));
 
@@ -637,7 +642,7 @@ public class TestResultSetComparer {
    *  Checks that two different compatible numerical types can be compared, but have different values
    */
   @Test
-  public void testNumericalColumnTypeMismatchIsComparable() throws SQLException {
+  public void testNumericalColumnTypeMismatchIsComparable()  {
     SelectStatement left = select(field("stringKey"), field("intCol")).from(tableRef("ComparableNumericalColumns"));
     SelectStatement right = select(field("stringKey"), field("zeroScaleDecimalCol")).from(tableRef("ComparableNumericalColumns"));
 
@@ -655,7 +660,7 @@ public class TestResultSetComparer {
    *  Checks that two different numerical types can be compared, e.g. an INTEGER and a DECIMAL
    */
   @Test
-  public void testNumericalColumnTypeMismatchIsComparable2() throws SQLException {
+  public void testNumericalColumnTypeMismatchIsComparable2()  {
     SelectStatement left = select(field("stringKey"), field("intCol")).from(tableRef("UnComparableNumericalColumns"));
     SelectStatement right = select(field("stringKey"), field("decimalCol")).from(tableRef("UnComparableNumericalColumns"));
 
@@ -673,7 +678,7 @@ public class TestResultSetComparer {
    * Checks that we can handle decimal types with different widths and scales
    */
   @Test
-  public void testCanHandleCompatibleMismatchedTypes1() throws SQLException {
+  public void testCanHandleCompatibleMismatchedTypes1()  {
     SelectStatement left = select(literal(21.3));
     SelectStatement right = select(sum(field("nullableDecimalCol"))).from(tableRef("SingleKeyMismatchRight"));
     resultSetComparer.compare(new int[]{1}, left, right, connection, mock(CompareCallback.class));
@@ -684,7 +689,7 @@ public class TestResultSetComparer {
    * Checks that we can handle decimal types with different widths and scales
    */
   @Test
-  public void testCanHandleCompatibleMismatchedTypes2() throws SQLException {
+  public void testCanHandleCompatibleMismatchedTypes2()  {
     SelectStatement left = select(count()).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(literal(3));
     resultSetComparer.compare(new int[]{1}, left, right, connection, mock(CompareCallback.class));
@@ -696,7 +701,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testColumnCountMismatch() throws SQLException {
+  public void testColumnCountMismatch()  {
     SelectStatement left = select(field("stringKey")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("stringKey"), field("nullableDateCol")).from(tableRef("SingleKeyMismatchRight"));
 
@@ -711,7 +716,7 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testKeylessMultiRowResult() throws SQLException {
+  public void testKeylessMultiRowResult()  {
     SelectStatement left = select(field("stringKey")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("stringKey")).from(tableRef("SingleKeyMismatchRight"));
 
@@ -725,7 +730,7 @@ public class TestResultSetComparer {
    * Negative test with booleans
    */
   @Test
-  public void testBooleanMatch() throws SQLException {
+  public void testBooleanMatch()  {
     SelectStatement left1 = select(field("booleanCol")).from(tableRef("SingleKeyLeft")).where(field("stringKey").eq("keyA"));
     SelectStatement right = select(field("booleanCol")).from(tableRef("SingleKeyLeft")).where(field("stringKey").eq("keyC"));
 
@@ -741,7 +746,7 @@ public class TestResultSetComparer {
    * Positive test with booleans
    */
   @Test
-  public void testBooleanNoMatch() throws SQLException {
+  public void testBooleanNoMatch()  {
     SelectStatement left1 = select(field("booleanCol")).from(tableRef("SingleKeyLeft")).where(field("stringKey").eq("keyA"));
     SelectStatement right = select(field("booleanCol")).from(tableRef("SingleKeyLeft")).where(field("stringKey").eq("keyB"));
 
@@ -758,11 +763,55 @@ public class TestResultSetComparer {
    *
    */
   @Test
-  public void testUnsupportedDataType() throws SQLException {
+  public void testUnsupportedDataType()  {
     SelectStatement left1 = select(field("nullableCLOBCol")).from(tableRef("SingleKeyLeft"));
     SelectStatement right = select(field("nullableCLOBCol")).from(tableRef("SingleKeyLeft"));
 
     thrown.expect(IllegalArgumentException.class);
     resultSetComparer.compare(new int[]{}, left1, right, connection, mock(CompareCallback.class));
+  }
+
+
+  /**
+   * Tests using statement parameters
+   */
+  @Test
+  public void testWithStatmentParameters()  {
+    SelectStatement left = select(count()).from(tableRef("MultiKeyLeft")).where(field("intKey").eq(parameter("param1").type(INTEGER)));
+    SelectStatement right = select(count()).from(tableRef("MultiKeyMatchRight")).where(field("stringKey").eq(parameter("param2").type(STRING)));
+
+    StatementParameters leftParams = DataSetUtils.statementParameters().setInteger("param1", 2); // <-- Exists
+    StatementParameters rightParams = DataSetUtils.statementParameters().setString("param2", "NonExistent"); // <-- Does not exist
+
+    CompareCallback callBackMock = mock(CompareCallback.class);
+    ArgumentCaptor<ResultSetMismatch> rsMismatchCaptor = ArgumentCaptor.forClass(ResultSetMismatch.class);
+
+    int mismatchCount = resultSetComparer.compare(new int[]{}, left, right, connection, connection, callBackMock, leftParams, rightParams);
+
+    verify(callBackMock).mismatch(rsMismatchCaptor.capture());
+    assertEquals("Row count should have 1 mismatch", 1, mismatchCount);
+    checkMismatch(rsMismatchCaptor.getValue(), MISMATCH, "1", "0", 1);
+  }
+
+
+  /**
+   * Tests using statement parameters on the left side only
+   */
+  @Test
+  public void testWithStatmentParametersLeftOnly()  {
+    SelectStatement left = select(count()).from(tableRef("MultiKeyLeft")).where(field("intKey").eq(parameter("param1").type(INTEGER)));
+    SelectStatement right = select(count()).from(tableRef("MultiKeyMatchRight"));
+
+    StatementParameters leftParams = DataSetUtils.statementParameters().setInteger("param1", 2); // <-- Exists
+    StatementParameters rightParams = DataSetUtils.statementParameters();
+
+    CompareCallback callBackMock = mock(CompareCallback.class);
+    ArgumentCaptor<ResultSetMismatch> rsMismatchCaptor = ArgumentCaptor.forClass(ResultSetMismatch.class);
+
+    int mismatchCount = resultSetComparer.compare(new int[]{}, left, right, connection, connection, callBackMock, leftParams, rightParams);
+
+    verify(callBackMock).mismatch(rsMismatchCaptor.capture());
+    assertEquals("Row count should have 1 mismatch", 1, mismatchCount);
+    checkMismatch(rsMismatchCaptor.getValue(), MISMATCH, "1", "3", 1);
   }
 }

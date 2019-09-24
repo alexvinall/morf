@@ -16,6 +16,9 @@
 package org.alfasoftware.morf.jdbc.oracle;
 
 import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.SQLTransientException;
+import java.util.Optional;
 import java.util.Stack;
 
 import javax.sql.XADataSource;
@@ -27,8 +30,6 @@ import org.alfasoftware.morf.metadata.Schema;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import com.google.common.base.Optional;
 
 
 /**
@@ -60,10 +61,9 @@ public final class Oracle extends AbstractDatabaseType {
     return "jdbc:oracle:thin:@" + jdbcUrlElements.getHostName() + (jdbcUrlElements.getPort() == 0 ? "" : ":" + jdbcUrlElements.getPort()) + "/" + jdbcUrlElements.getInstanceName();
   }
 
-
   /**
-  * @see org.alfasoftware.morf.jdbc.DatabaseTypes#formatJdbcUrl(java.lang.String, int, java.lang.String, java.lang.String, java.lang.String)
-  */
+   *  @see org.alfasoftware.morf.jdbc.DatabaseType#openSchema(Connection, String, String)
+   */
   @Override
   public Schema openSchema(Connection connection, String databaseName, String schemaName) {
     if (StringUtils.isEmpty(schemaName)) throw new IllegalStateException("No schema name has been provided, but a schema name is required when connecting to Oracle");
@@ -72,7 +72,7 @@ public final class Oracle extends AbstractDatabaseType {
 
 
   /**
-   * @see org.alfasoftware.morf.jdbc.DatabaseTypes#canTrace()
+   * @see org.alfasoftware.morf.jdbc.DatabaseType#canTrace()
    */
   @Override
   public boolean canTrace() {
@@ -123,6 +123,52 @@ public final class Oracle extends AbstractDatabaseType {
 
 
   /**
+   * @see org.alfasoftware.morf.jdbc.DatabaseType#reclassifyException(java.lang.Exception)
+   */
+  @Override
+  public Exception reclassifyException(Exception e) {
+    // Reclassify OracleXA exceptions
+    Optional<Integer> xaErrorCode = getErrorCodeFromOracleXAException(e);
+    if (xaErrorCode.isPresent()) {
+      // ORA-00060: Deadlock detected while waiting for resource
+      // ORA-02049: Distributed transaction waiting for lock
+      if (xaErrorCode.get() == 60 || xaErrorCode.get() == 2049) {
+        return new SQLTransientException(e.getMessage(), null, xaErrorCode.get(), e);
+      }
+      return new SQLException(e.getMessage(), null, xaErrorCode.get(), e);
+    }
+
+    // Reclassify any SQLExceptions which should be SQLTransientExceptions but are not. Specifically this handles BatchUpdateExceptions
+    if(e instanceof SQLException && !(e instanceof SQLTransientException)) {
+      int errorCode = ((SQLException) e).getErrorCode();
+      if(errorCode == 60 || errorCode == 2049) {
+        return new SQLTransientException(e.getMessage(), ((SQLException) e).getSQLState(), errorCode, e);
+      }
+    }
+
+    return e;
+  }
+
+
+  /**
+   * Recursively try and extract the error code from any nested OracleXAException
+   */
+  private Optional<Integer> getErrorCodeFromOracleXAException(Throwable exception) {
+    try {
+      if ("oracle.jdbc.xa.OracleXAException".equals(exception.getClass().getName())) {
+        return Optional.of((Integer) exception.getClass().getMethod("getOracleError").invoke(exception));
+      } else if (exception.getCause() != null) {
+        return getErrorCodeFromOracleXAException(exception.getCause());
+      }
+      return Optional.empty();
+    } catch (Exception e) {
+      log.error("Exception when trying to extract error code", exception);
+      throw new RuntimeException(e);
+    }
+  }
+
+
+  /**
    *
    * @see org.alfasoftware.morf.jdbc.AbstractDatabaseType#extractJdbcUrl(java.lang.String)
    */
@@ -133,7 +179,7 @@ public final class Oracle extends AbstractDatabaseType {
     String scheme = splitURL.pop();
 
     if (!scheme.equalsIgnoreCase("oracle")) {
-      return Optional.absent();
+      return Optional.empty();
     }
 
     splitURL.pop(); // Remove the "mem" or "thin"

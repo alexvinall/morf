@@ -16,6 +16,7 @@
 package org.alfasoftware.morf.jdbc.mysql;
 
 import java.sql.Connection;
+import java.util.Optional;
 import java.util.Stack;
 
 import javax.sql.XADataSource;
@@ -26,8 +27,6 @@ import org.alfasoftware.morf.jdbc.SqlDialect;
 import org.alfasoftware.morf.metadata.Schema;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import com.google.common.base.Optional;
 
 
 /**
@@ -55,12 +54,13 @@ public final class MySql extends AbstractDatabaseType {
    */
   @Override
   public String formatJdbcUrl(JdbcUrlElements jdbcUrlElements) {
-    return "jdbc:mysql://" + jdbcUrlElements.getHostName() + (jdbcUrlElements.getPort() == 0 ? "" : ":" + jdbcUrlElements.getPort()) + "/" + jdbcUrlElements.getDatabaseName() + "?rewriteBatchedStatements=true";
+    return "jdbc:mysql://" + jdbcUrlElements.getHostName() + (jdbcUrlElements.getPort() == 0 ? "" : ":" + jdbcUrlElements.getPort()) + "/" + jdbcUrlElements.getDatabaseName()
+            + "?rewriteBatchedStatements=true&useJDBCCompliantTimezoneShift=true&useSSL=false";
   }
 
 
   /**
-   * @see org.alfasoftware.morf.jdbc.DatabaseTypes#formatJdbcUrl(java.lang.String, int, java.lang.String, java.lang.String, java.lang.String)
+   * @see org.alfasoftware.morf.jdbc.DatabaseType#openSchema(Connection, String, String)
    */
   @Override
   public Schema openSchema(Connection connection, String databaseName, String schemaName) {
@@ -123,7 +123,7 @@ public final class MySql extends AbstractDatabaseType {
     String scheme = splitURL.pop();
 
     if (!scheme.equalsIgnoreCase("mysql")) {
-      return Optional.absent();
+      return Optional.empty();
     }
 
     if (!splitURL.pop().equals("://")) {

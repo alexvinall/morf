@@ -1,0 +1,3 @@
+# Set the behaviour for xml files, in case people have core.autocrlf set differently.
+# We need them to have line feeds in order for tests to pass
+//test//*.xml text eol=lf

@@ -15,6 +15,8 @@
 
 package org.alfasoftware.morf.jdbc;
 
+import static org.alfasoftware.morf.jdbc.NamedParameterPreparedStatement.parse;
+
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -22,17 +24,17 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 import javax.sql.DataSource;
 
+import org.alfasoftware.morf.jdbc.NamedParameterPreparedStatement.ParseResult;
 import org.alfasoftware.morf.metadata.DataSetUtils;
 import org.alfasoftware.morf.metadata.DataValueLookup;
 import org.alfasoftware.morf.sql.SelectStatement;
 import org.alfasoftware.morf.sql.element.SqlParameter;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-
-import com.google.common.base.Optional;
 
 /**
  * Executes an SQL script.
@@ -45,13 +47,6 @@ import com.google.common.base.Optional;
 public class SqlScriptExecutor {
   /** Standard logger */
   private static final Log log = LogFactory.getLog(SqlScriptExecutor.class);
-
-  /**
-   * Size of batches used within
-   * {@link #executeStatementBatch(String, Iterable, Iterable, Connection, boolean)}
-   * to bundle up insert statements.
-   */
-  private static final int BATCH_SIZE = 1000;
 
   /**
    * Visitor to be notified about SQL execution.
@@ -129,42 +124,65 @@ public class SqlScriptExecutor {
         // Either initialise this executor with a DataSource or use the execute(Iterable<String>, Connection) method.
         throw new IllegalStateException("No data source found.");
       }
-
-      Connection connection = dataSource.getConnection();
-      boolean wasAutoCommit = connection.getAutoCommit();
-      try {
-        if (wasAutoCommit) connection.setAutoCommit(false);
-
-        work.execute(connection);
-
-        connection.commit();
-      } catch (SQLException e) {
-        connection.rollback();
-        throw e;
-      } finally {
-        if (wasAutoCommit) connection.setAutoCommit(true);
-        connection.close();
+      try (Connection connection = dataSource.getConnection()) {
+        autoCommitOff(connection, () -> {
+          commitOrRollback(connection, () -> {
+            work.execute(connection);
+          });
+        });
       }
     } catch (SQLException e) {
-      throw new RuntimeSqlException(e);
+      throw reclassifiedRuntimeException(e, "Error with statement");
     }
+  }
+
+
+  private void commitOrRollback(Connection connection, SqlExceptionThrowingRunnable runnable) throws SQLException {
+    try {
+      runnable.run();
+      connection.commit();
+    } catch (Exception e) {
+      try {
+        connection.rollback();
+      } finally { //NOPMD
+        throw e;
+      }
+    }
+  }
+
+
+  private void autoCommitOff(Connection connection, SqlExceptionThrowingRunnable runnable) throws SQLException {
+    boolean wasAutoCommit = connection.getAutoCommit();
+    if (wasAutoCommit) connection.setAutoCommit(false);
+    try {
+      runnable.run();
+    } finally {
+      if (wasAutoCommit) connection.setAutoCommit(true);
+    }
+  }
+
+
+  private interface SqlExceptionThrowingRunnable {
+    public void run() throws SQLException;
   }
 
 
   /**
    * Runs a script of SQL statements and commit.
-   *
-   * The statements are executed in the order they are provided
+   * The statements are executed in the order they are provided.
    *
    * @param sqlScript SQL statements to run.
+   * @return The number of rows updated/affected by the statements in total.
    */
-  public void execute(final Iterable<String> sqlScript) {
+  public int execute(final Iterable<String> sqlScript) {
+    final Holder<Integer> holder = new Holder<>(-1);
     doWork(new Work() {
       @Override
       public void execute(Connection connection) throws SQLException {
-        SqlScriptExecutor.this.executeAndCommit(sqlScript, connection);
+        holder.set(SqlScriptExecutor.this.executeAndCommit(sqlScript, connection));
       }
     });
+    return holder.get();
   }
 
 
@@ -173,17 +191,20 @@ public class SqlScriptExecutor {
    *
    * @param sqlScript SQL statements to run.
    * @param connection Database against which to run SQL statements.
+   * @return The number of rows updated/affected by the statements in total.
    */
-  public void execute(Iterable<String> sqlScript, Connection connection) {
+  public int execute(Iterable<String> sqlScript, Connection connection) {
+    int result = 0;
     try {
       visitor.executionStart();
       for (String sql : sqlScript) {
-        executeInternal(sql, connection);
+        result += executeInternal(sql, connection);
       }
       visitor.executionEnd();
     } catch (SQLException e) {
-      throw new RuntimeSqlException("Error with statement", e);
+      throw reclassifiedRuntimeException(e, "Error with statement");
     }
+    return result;
   }
 
 
@@ -192,18 +213,21 @@ public class SqlScriptExecutor {
    *
    * @param sqlScript SQL statements to run.
    * @param connection Database against which to run SQL statements.
+   * @return The number of rows updated/affected by the statements in total.
    */
-  public void executeAndCommit(Iterable<String> sqlScript, Connection connection) {
+  public int executeAndCommit(Iterable<String> sqlScript, Connection connection) {
+    int result = 0;
     try {
       visitor.executionStart();
       for (String sql : sqlScript) {
-        executeInternal(sql, connection);
+        result += executeInternal(sql, connection);
         connection.commit();
       }
       visitor.executionEnd();
     } catch (SQLException e) {
-      throw new RuntimeSqlException("Error with statement", e);
+      throw reclassifiedRuntimeException(e, "Error with statement");
     }
+    return result;
   }
 
 
@@ -221,7 +245,7 @@ public class SqlScriptExecutor {
       visitor.executionEnd();
       return rowsUpdated;
     } catch (SQLException e) {
-      throw new RuntimeSqlException("Error with statement", e);
+      throw reclassifiedRuntimeException(e, "Error with statement");
     }
   }
 
@@ -229,7 +253,7 @@ public class SqlScriptExecutor {
   /**
    * Runs a single SQL statment.
    *
-   * @param sqlStatement The single SQL statment to run
+   * @param sqlStatement The single SQL statement to run
    * @return The number of rows updated/affected by this statement
    */
   public int execute(final String sqlStatement) {
@@ -263,16 +287,12 @@ public class SqlScriptExecutor {
     int numberOfRowsUpdated = 0;
     try {
       try {
-        NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sqlStatement).createFor(
-          connection);
-        try {
-          prepareParameters(preparedStatement, parameterMetadata, parameterData);
+        try (NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sqlStatement).createFor(connection)) {
+          sqlDialect.prepareStatementParameters(preparedStatement, parameterMetadata, parameterData);
           numberOfRowsUpdated = preparedStatement.executeUpdate();
-        } finally {
-          preparedStatement.close();
         }
       } catch (SQLException e) {
-        throw new RuntimeSqlException(e);
+        throw reclassifiedRuntimeException(e, "Error executing SQL [" + sqlStatement + "]");
       }
       return numberOfRowsUpdated;
     } finally {
@@ -282,6 +302,10 @@ public class SqlScriptExecutor {
 
 
   /**
+   * @param sqlStatement The SQL statement to execute
+   * @param parameterMetadata The metadata of the parameters being supplied.
+   * @param parameterData The values of the parameters.
+   * @return The number of rows updated/affected by this statement
    * @see #execute(String, Connection, Iterable, DataValueLookup)
    */
   public int execute(final String sqlStatement, final Iterable<SqlParameter> parameterMetadata, final DataValueLookup parameterData) {
@@ -313,8 +337,7 @@ public class SqlScriptExecutor {
         return 0;
       }
 
-      Statement statement = connection.createStatement();
-      try {
+      try (Statement statement = connection.createStatement()) {
         if (log.isDebugEnabled())
           log.debug("Executing SQL [" + sql + "]");
 
@@ -326,18 +349,24 @@ public class SqlScriptExecutor {
         if (log.isDebugEnabled())
           log.debug("SQL resulted in [" + numberOfRowsUpdated + "] rows updated");
 
-      } catch (SQLException e) {
-        throw new RuntimeSqlException("Error executing SQL [" + sql + "]", e);
       } catch (Exception e) {
-        throw new RuntimeException("Error executing SQL [" + sql + "]", e);
-      } finally {
-        statement.close();
+        throw reclassifiedRuntimeException(e, "Error executing SQL [" + sql + "]");
       }
 
       return numberOfRowsUpdated;
     } finally {
       visitor.afterExecute(sql, numberOfRowsUpdated);
     }
+  }
+
+
+  /**
+   * Reclassify an exception if it is dialect specific and wrap in a runtime exception.
+   */
+  private RuntimeException reclassifiedRuntimeException(Exception e, String message) {
+    Exception reclassifiedException = sqlDialect.getDatabaseType().reclassifyException(e);
+    return reclassifiedException instanceof SQLException ? new RuntimeSqlException(message, (SQLException) reclassifiedException) :
+                                       new RuntimeException(message, reclassifiedException);
   }
 
 
@@ -402,8 +431,8 @@ public class SqlScriptExecutor {
    *
    * @param sql the sql statement to run.
    * @param processor the code to be run to process the {@link ResultSet}.
+   * @param <T> the type of results processed
    * @return the result from {@link ResultSetProcessor#process(ResultSet)}.
-   * @throws SQLException throws an exception for statement errors.
    */
   public <T> T executeQuery(String sql, ResultSetProcessor<T> processor) {
     return executeQuery(sql).processWith(processor);
@@ -419,8 +448,9 @@ public class SqlScriptExecutor {
    * <p>Usage example:</p>
    *
    * <blockquote><pre>
-   * boolean found = executor.executeQuery(sqlToCheckIfRecordExists, new ResultSetProcessor<Boolean>() {
-   *   @Override
+   *
+   *   {@code boolean found = executor.executeQuery(sqlToCheckIfRecordExists, new ResultSetProcessor<Boolean>}() {
+   *   &#064;Override
    *   public Boolean process(ResultSet resultSet) throws SQLException {
    *     return resultSet.next();
    *   }
@@ -428,13 +458,14 @@ public class SqlScriptExecutor {
    * if (!found) {
    *   insertRecord();
    * }
+   *
    * </pre></blockquote>
 
    * @param sql the sql statement to run.
    * @param connection the connection to use.
    * @param processor the code to be run to process the {@link ResultSet}.
+   * @param <T> the type of results processed
    * @return the result from {@link ResultSetProcessor#process(ResultSet)}.
-   * @throws SQLException throws an exception for statement errors.
    */
   public <T> T executeQuery(String sql, Connection connection, ResultSetProcessor<T> processor) {
     return executeQuery(sql).withConnection(connection).processWith(processor);
@@ -448,12 +479,13 @@ public class SqlScriptExecutor {
    * can return a value of any type, which will form the return value of this
    * method.
    *
-   * @param selectStatement the select statement to run.
+   * @param query the select statement to run.
    * @param parameterMetadata the metadata describing the parameters.
    * @param parameterData the values to insert.
    * @param connection the connection to use.
    * @param resultSetProcessor the code to be run to process the
    *          {@link ResultSet}.
+   * @param <T> the type of results processed
    * @return the result from {@link ResultSetProcessor#process(ResultSet)}.
    */
   public <T> T executeQuery(SelectStatement query, Iterable<SqlParameter> parameterMetadata,
@@ -481,34 +513,59 @@ public class SqlScriptExecutor {
    *          this.
    * @param queryTimeout the timeout in <b>seconds</b> after which the query
    *          will time out on the database side
+   * @param standalone whether the query being executed is stand-alone.
+   * @param <T> the type of results processed
    * @return the result from {@link ResultSetProcessor#process(ResultSet)}.
    */
-  private <T> T executeQuery(String sql, Iterable<SqlParameter> parameterMetadata,
-      DataValueLookup parameterData, Connection connection, ResultSetProcessor<T> resultSetProcessor, Optional<Integer> maxRows, Optional<Integer> queryTimeout) {
+  private <T> T executeQuery(String sql, Iterable<SqlParameter> parameterMetadata, DataValueLookup parameterData,
+      Connection connection, ResultSetProcessor<T> resultSetProcessor, Optional<Integer> maxRows, Optional<Integer> queryTimeout,
+      boolean standalone) {
     try {
-      NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sql).createFor(connection);
-      try {
+      ParseResult parseResult = parse(sql);
+      try (NamedParameterPreparedStatement preparedStatement = standalone ? parseResult.createForQueryOn(connection) : parseResult.createFor(connection)) {
+        if (standalone) {
+          preparedStatement.setFetchSize(sqlDialect.fetchSizeForBulkSelects());
+        } else {
+          preparedStatement.setFetchSize(sqlDialect.fetchSizeForBulkSelectsAllowingConnectionUseDuringStreaming());
+        }
         return executeQuery(preparedStatement, parameterMetadata, parameterData, resultSetProcessor, maxRows, queryTimeout);
-      } finally {
-        preparedStatement.close();
       }
     } catch (SQLException e) {
-      throw new RuntimeSqlException("SQL exception when executing query", e);
+      throw reclassifiedRuntimeException(e, "SQL exception when executing query");
     }
   }
 
 
+  /**
+   * Runs a {@link NamedParameterPreparedStatement} (with parameters), allowing
+   * its {@link ResultSet} to be processed by the supplied implementation of
+   * {@link ResultSetProcessor}. {@link ResultSetProcessor#process(ResultSet)}
+   * can return a value of any type, which will form the return value of this
+   * method.
+   *
+   * @param preparedStatement Prepared statement to run.
+   * @param parameterMetadata the metadata describing the parameters.
+   * @param parameterData the values to insert.
+   * @param connection the connection to use.
+   * @param processor the code to be run to process the {@link ResultSet}.
+   * @param maxRows The maximum number of rows to be returned. Will inform the
+   *          JDBC driver to tell the server not to return any more rows than
+   *          this.
+   * @param queryTimeout the timeout in <b>seconds</b> after which the query
+   *          will time out on the database side
+   * @return the result from {@link ResultSetProcessor#process(ResultSet)}.
+   */
   private <T> T executeQuery(NamedParameterPreparedStatement preparedStatement, Iterable<SqlParameter> parameterMetadata,
       DataValueLookup parameterData, ResultSetProcessor<T> processor, Optional<Integer> maxRows, Optional<Integer> queryTimeout) {
     if (sqlDialect == null) {
       throw new IllegalStateException("Must construct with dialect");
     }
     try {
-      prepareParameters(preparedStatement, parameterMetadata, parameterData);
+      sqlDialect.prepareStatementParameters(preparedStatement, parameterMetadata, parameterData);
       if (maxRows.isPresent()) {
         preparedStatement.setMaxRows(maxRows.get());
       }
-      if(queryTimeout.isPresent()) {
+      if (queryTimeout.isPresent()) {
         preparedStatement.setQueryTimeout(queryTimeout.get());
       }
       ResultSet resultSet = preparedStatement.executeQuery();
@@ -521,9 +578,10 @@ public class SqlScriptExecutor {
       }
 
     } catch (SQLException e) {
-      throw new RuntimeSqlException("SQL exception when executing query: [" + preparedStatement + "]", e);
+      throw reclassifiedRuntimeException(e, "SQL exception when executing query: [" + preparedStatement + "]");
     }
   }
+
 
   /**
    * Runs the specified SQL statement (which should contain parameters), repeatedly for
@@ -535,36 +593,26 @@ public class SqlScriptExecutor {
    * @param parameterMetadata the metadata describing the parameters.
    * @param parameterData the values to insert.
    * @param connection the JDBC connection to use.
+   * @param explicitCommit Determine if an explicit commit should be invoked after executing the supplied batch
+   * @param statementsPerFlush the number of statements to execute between JDBC batch flushes. Higher numbers have higher memory cost
+   *   but reduce the number of I/O round-trips to the database.
    */
-  public void executeStatementBatch(String sqlStatement, Iterable<SqlParameter> parameterMetadata, Iterable<? extends DataValueLookup> parameterData, Connection connection, boolean explicitCommit) {
+  public void executeStatementBatch(String sqlStatement, Iterable<SqlParameter> parameterMetadata, Iterable<? extends DataValueLookup> parameterData, Connection connection, boolean explicitCommit, int statementsPerFlush) {
     try {
-      NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sqlStatement).createFor(connection);
-      try {
-        executeStatementBatch(preparedStatement, parameterMetadata, parameterData, connection, explicitCommit);
+      try (NamedParameterPreparedStatement preparedStatement = NamedParameterPreparedStatement.parse(sqlStatement).createFor(connection)) {
+        executeStatementBatch(preparedStatement, parameterMetadata, parameterData, connection, explicitCommit, statementsPerFlush);
       } finally {
         if (explicitCommit) {
           connection.commit();
         }
-        preparedStatement.close();
       }
     } catch (SQLException e) {
-      throw new RuntimeSqlException("SQL exception executing batch", e);
+      throw reclassifiedRuntimeException(e, "SQL exception executing batch");
     }
   }
 
 
-  /**
-   * Runs the specified prepared statement (which should contain parameters), repeatedly for
-   * each record, mapping the contents of the records into the statement parameters in
-   * their defined order.  Use to insert, merge or update a large batch of records
-   * efficiently.
-   *
-   * @param preparedStatement the prepared statement.
-   * @param parameterMetadata the metadata describing the parameters.
-   * @param parameterData the values to insert.
-   * @param connection the JDBC connection to use.
-   */
-  public void executeStatementBatch(NamedParameterPreparedStatement preparedStatement, Iterable<SqlParameter> parameterMetadata, Iterable<? extends DataValueLookup> parameterData, Connection connection, boolean explicitCommit) {
+  private void executeStatementBatch(NamedParameterPreparedStatement preparedStatement, Iterable<SqlParameter> parameterMetadata, Iterable<? extends DataValueLookup> parameterData, Connection connection, boolean explicitCommit, int statementsPerFlush) {
     if (sqlDialect == null) {
       throw new IllegalStateException("Must construct with dialect");
     }
@@ -573,18 +621,18 @@ public class SqlScriptExecutor {
       long count = 0;
       for (DataValueLookup data : parameterData) {
 
-        prepareParameters(preparedStatement, parameterMetadata, data);
+        sqlDialect.prepareStatementParameters(preparedStatement, parameterMetadata, data);
 
         // Use batching or just execute directly
         if (sqlDialect.useInsertBatching()) {
           preparedStatement.addBatch();
           count++;
-          if (count % BATCH_SIZE == 0) {
+          if (count % statementsPerFlush == 0) {
             try {
               preparedStatement.executeBatch();
               preparedStatement.clearBatch();
             } catch (SQLException e) {
-              throw new RuntimeSqlException("Error executing batch", e);
+              throw reclassifiedRuntimeException(e, "Error executing batch");
             }
             // commit each batch for performance reasons
             if (explicitCommit) {
@@ -597,42 +645,20 @@ public class SqlScriptExecutor {
           } catch (SQLException e) {
             List<String> inserts = new ArrayList<>();
             for (SqlParameter parameter : parameterMetadata) {
-              inserts.add(data.getValue(parameter.getImpliedName()));
+              inserts.add(data.getString(parameter.getImpliedName()));
             }
-            throw new RuntimeSqlException("Error executing batch with values " + inserts, e);
+            throw reclassifiedRuntimeException(e, "Error executing batch with values " + inserts);
           }
         }
       }
 
       // Clear up any remaining batch statements if in batch mode and
       // have un-executed statements
-      if (sqlDialect.useInsertBatching() && count % BATCH_SIZE > 0) {
+      if (sqlDialect.useInsertBatching() && count % statementsPerFlush > 0) {
         preparedStatement.executeBatch();
       }
     } catch (SQLException e) {
-      throw new RuntimeSqlException("SQLException executing batch. Prepared Statements: [" + preparedStatement + "]", e);
-    }
-  }
-
-
-  /**
-   * Prepare the statement parameters by parsing them into the right type and
-   * assigning to preparedStatement
-   *
-   * @param preparedStatement
-   * @param parameterMetadata
-   * @param data
-   */
-  private void prepareParameters(NamedParameterPreparedStatement preparedStatement, Iterable<SqlParameter> parameterMetadata,
-      DataValueLookup data) {
-    for (SqlParameter parameter : parameterMetadata) {
-      String value = null;
-      try {
-        value = data.getValue(parameter.getImpliedName());
-        sqlDialect.prepareStatementParameter(preparedStatement, parameter, value);
-      } catch (Exception e) {
-        throw new RuntimeException(String.format("Failed to parse value [%s] for column [%s]", value, parameter.getImpliedName()), e);
-      }
+      throw reclassifiedRuntimeException(e, "SQLException executing batch. Prepared Statements: [" + preparedStatement + "]");
     }
   }
 
@@ -650,11 +676,11 @@ public class SqlScriptExecutor {
 
     /**
      * Process a {@link ResultSet}, returning a result to be returned by a call
-     * to {@link SqlScriptExecutor#executeQuery(String, ResultSetProcessor).}
+     * to {@link SqlScriptExecutor#executeQuery(String, ResultSetProcessor)}.
      *
      * @param resultSet The result set.
      * @return A value, which will be the return value of {@link SqlScriptExecutor#executeQuery(String, ResultSetProcessor)}
-     * @throws SQLException
+     * @throws SQLException when an error occurs when processing the supplied {@link ResultSet}
      */
     public T process(ResultSet resultSet) throws SQLException;
   }
@@ -672,6 +698,7 @@ public class SqlScriptExecutor {
      */
     @Override
     public void executionStart() {
+      // Defaults to no-op
     }
 
 
@@ -680,6 +707,7 @@ public class SqlScriptExecutor {
      */
     @Override
     public void beforeExecute(String sql) {
+      // Defaults to no-op
     }
 
 
@@ -689,6 +717,7 @@ public class SqlScriptExecutor {
      */
     @Override
     public void afterExecute(String sql, long numberOfRowsUpdated) {
+      // Defaults to no-op
     }
 
 
@@ -697,6 +726,7 @@ public class SqlScriptExecutor {
      */
     @Override
     public void executionEnd() {
+      // Defaults to no-op
     }
   }
 
@@ -776,10 +806,20 @@ public class SqlScriptExecutor {
     /**
      * Specifies the time in <b>seconds</b> after which the query will time out.
      *
-     * @param queryTimeout
+     * @param queryTimeout time out length in seconds
      * @return this
      */
     QueryBuilder withQueryTimeout(int queryTimeout);
+
+
+    /**
+     * Specifies that the query being built is stand-alone. This is used to
+     * indicate that the connection used by the query won't be used while the
+     * query results are being read.
+     *
+     * @return this
+     */
+    QueryBuilder standalone();
 
 
     /**
@@ -787,6 +827,7 @@ public class SqlScriptExecutor {
      * processor, and returns the result of the processor.
      *
      * @param resultSetProcessor The result set processor
+     * @param <T> the type of results processed
      * @return The result of the processor.
      */
     <T> T processWith(ResultSetProcessor<T> resultSetProcessor);
@@ -804,8 +845,9 @@ public class SqlScriptExecutor {
     private Iterable<SqlParameter> parameterMetadata = Collections.emptyList();
     private DataValueLookup parameterData = DataSetUtils.record();
     private Connection connection;
-    private Optional<Integer> maxRows = Optional.absent();
-    private Optional<Integer> queryTimeout = Optional.absent();
+    private Optional<Integer> maxRows = Optional.empty();
+    private Optional<Integer> queryTimeout = Optional.empty();
+    private boolean standalone;
 
 
     QueryBuilderImpl(String query) {
@@ -853,7 +895,7 @@ public class SqlScriptExecutor {
     }
 
     /**
-     * @see org.alfasoftware.morf.jdbc.SqlScriptExecutor.QueryBuilder#withMaxRows(com.google.common.base.Optional)
+     * @see org.alfasoftware.morf.jdbc.SqlScriptExecutor.QueryBuilder#withMaxRows(java.util.Optional)
      */
     @Override
     public QueryBuilder withMaxRows(Optional<Integer> maxRows) {
@@ -861,13 +903,20 @@ public class SqlScriptExecutor {
       return this;
     }
 
-
+    /**
+     * @see org.alfasoftware.morf.jdbc.SqlScriptExecutor.QueryBuilder#withQueryTimeout(int)
+     */
     @Override
     public QueryBuilder withQueryTimeout(int queryTimeout) {
       this.queryTimeout  = Optional.of(queryTimeout);
       return this;
     }
 
+    @Override
+    public QueryBuilder standalone() {
+      this.standalone = true;
+      return this;
+    }
 
     /**
      * @see org.alfasoftware.morf.jdbc.SqlScriptExecutor.QueryBuilder#processWith(org.alfasoftware.morf.jdbc.SqlScriptExecutor.ResultSetProcessor)
@@ -880,7 +929,7 @@ public class SqlScriptExecutor {
         Work work = new Work() {
           @Override
           public void execute(Connection innerConnection) throws SQLException {
-            holder.set(executeQuery(query, parameterMetadata, parameterData, innerConnection, resultSetProcessor, maxRows, queryTimeout));
+            holder.set(executeQuery(query, parameterMetadata, parameterData, innerConnection, resultSetProcessor, maxRows, queryTimeout, standalone));
           }
         };
 
@@ -894,7 +943,7 @@ public class SqlScriptExecutor {
 
         return holder.get();
       } catch (SQLException e) {
-        throw new RuntimeSqlException("Error with statement", e);
+        throw reclassifiedRuntimeException(e, "Error with statement");
       }
     }
   }

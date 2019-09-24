@@ -21,17 +21,16 @@ import static org.mockito.Mockito.verify;
 
 import java.io.File;
 import java.sql.SQLException;
+import java.util.Optional;
 
 import javax.sql.DataSource;
-
-import org.junit.Before;
-import org.junit.Test;
 
 import org.alfasoftware.morf.jdbc.DatabaseType;
 import org.alfasoftware.morf.jdbc.DatabaseTypeIdentifier;
 import org.alfasoftware.morf.jdbc.JdbcUrlElements;
 import org.alfasoftware.morf.jdbc.JdbcUrlElements.Builder;
-import com.google.common.base.Optional;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
  * Tests for DatabaseType.H2
@@ -54,7 +53,7 @@ public class TestH2DatabaseType {
    */
   @Test
   public void testFormatJdbcUrl() {
-    String suffix = ";DB_CLOSE_DELAY=-1;MVCC=TRUE;DEFAULT_LOCK_TIMEOUT=60000";
+    String suffix = ";DB_CLOSE_DELAY=-1;MVCC=TRUE;DEFAULT_LOCK_TIMEOUT=60000;LOB_TIMEOUT=0;MV_STORE=FALSE";
 
     assertEquals("jdbc:h2:tcp://foo.com:123/mem:alfa" + suffix, databaseType.formatJdbcUrl(jdbcUrlElementBuilder().withHost("foo.com").withPort(123).withDatabaseName("alfa").build()));
     assertEquals("jdbc:h2:tcp://foo.com/mem:alfa" + suffix, databaseType.formatJdbcUrl(jdbcUrlElementBuilder().withHost("foo.com").withDatabaseName("alfa").build()));
@@ -64,7 +63,7 @@ public class TestH2DatabaseType {
     assertEquals("jdbc:h2:file:." + File.separator + "alfa" + suffix, databaseType.formatJdbcUrl(jdbcUrlElementBuilder().withInstanceName(".").withDatabaseName("alfa").build()));
     assertEquals("jdbc:h2:file:bar" + File.separator + "alfa" + suffix, databaseType.formatJdbcUrl(jdbcUrlElementBuilder().withInstanceName("bar" + File.separator).withDatabaseName("alfa").build()));
 
-    assertEquals("jdbc:h2:mem:data;DB_CLOSE_DELAY=-1;MVCC=TRUE;DEFAULT_LOCK_TIMEOUT=60000", databaseType.formatJdbcUrl(jdbcUrlElementBuilder().withHost("localhost").withDatabaseName("data").build()));
+    assertEquals("jdbc:h2:mem:data;DB_CLOSE_DELAY=-1;MVCC=TRUE;DEFAULT_LOCK_TIMEOUT=60000;LOB_TIMEOUT=0;MV_STORE=FALSE", databaseType.formatJdbcUrl(jdbcUrlElementBuilder().withHost("localhost").withDatabaseName("data").build()));
   }
 
 
@@ -85,7 +84,7 @@ public class TestH2DatabaseType {
     // -- Unknown and resource management...
     //
     DataSource dataSource = mockDataSourceFor("FictiousDB", "9.9.9", 9, 9);
-    assertEquals(Optional.absent(), new DatabaseTypeIdentifier(dataSource).identifyFromMetaData());
+    assertEquals(Optional.empty(), new DatabaseTypeIdentifier(dataSource).identifyFromMetaData());
     verify(dataSource.getConnection()).close();
 
     // -- Support platforms...

@@ -22,6 +22,7 @@ import org.alfasoftware.morf.jdbc.SqlDialect;
 import org.alfasoftware.morf.jdbc.SqlScriptExecutor;
 import org.alfasoftware.morf.jdbc.SqlScriptExecutorProvider;
 import org.alfasoftware.morf.metadata.Table;
+
 import com.google.inject.ImplementedBy;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -43,16 +44,22 @@ public interface TableLoaderBuilder {
 
   /**
    * Set the connection to use. This must always be specified.
+   * @param connection The connection to use.
+   * @return This builder for chaining
    */
   TableLoaderBuilder withConnection(final Connection connection);
 
   /**
    * Set the {@link SqlDialect} in use. This need only be specified if the builder was not injected.
+   * @param sqlDialect  The {@link SqlDialect} to use.
+   * @return This builder for chaining
    */
   TableLoaderBuilder withDialect(SqlDialect sqlDialect);
 
   /**
    * Set the {@link SqlScriptExecutor}. This need only be specified if the builder was not injected.
+   * @param executor The {@link SqlScriptExecutor} to use.
+   * @return This builder for chaining
    */
   TableLoaderBuilder withSqlScriptExecutor(final SqlScriptExecutor executor);
 
@@ -60,6 +67,8 @@ public interface TableLoaderBuilder {
    * Should an explicit commit be made after the load?
    *
    * <p>Defaults to false if not called.</p>
+   *
+   * @return This builder for chaining
    */
   TableLoaderBuilder explicitCommit();
 
@@ -67,6 +76,9 @@ public interface TableLoaderBuilder {
    * Should an explicit commit be made after the load?
    *
    * <p>Defaults to false if not specified.</p>
+   *
+   * @param explicitCommit Determines whether an explicit commit should be made or not.
+   * @return This builder for chaining
    */
   TableLoaderBuilder explicitCommit(boolean explicitCommit);
 
@@ -74,6 +86,8 @@ public interface TableLoaderBuilder {
    * Should the table be truncated before the load?
    *
    * <p>Defaults to false if not called.</p>
+   *
+   * @return This builder for chaining
    */
   TableLoaderBuilder truncateBeforeLoad();
 
@@ -83,6 +97,8 @@ public interface TableLoaderBuilder {
    * <p>This gives the DB dialect a hint that allows it to optimise behaviour.</p>
    *
    * <p>Defaults to false if not called.</p>
+   *
+   * @return This builder for chaining
    */
   TableLoaderBuilder insertingWithPresetAutonums();
 
@@ -92,8 +108,18 @@ public interface TableLoaderBuilder {
    * <p>This gives the DB dialect a hint that allows it to optimise behaviour.</p>
    *
    * Defaults to false if not specified.
+   *
+   * @return This builder for chaining
    */
   TableLoaderBuilder insertingUnderAutonumLimit();
+
+  /**
+   * Sets how many records we will include in each JDBC batch. Defaults to 1000.
+   *
+   * @param recordsPerBatch The records we will include in each JDBC batch. Defaults to 1000.
+   * @return This builder for chaining
+   */
+  TableLoaderBuilder withBatchSize(int recordsPerBatch);
 
   /**
    * Build the table loader for the specified table.
@@ -115,6 +141,7 @@ public interface TableLoaderBuilder {
     private boolean insertingWithPresetAutonums;
     private boolean insertingUnderAutonumLimit;
     private Provider<SqlDialect> sqlDialect;
+    private int batchSize = 1000;
 
     TableLoaderBuilderImpl() {
       super();
@@ -180,6 +207,12 @@ public interface TableLoaderBuilder {
     }
 
     @Override
+    public TableLoaderBuilder withBatchSize(int recordsPerBatch) {
+      this.batchSize = recordsPerBatch;
+      return this;
+    }
+
+    @Override
     public TableLoader forTable(Table table) {
       SqlScriptExecutor executor = sqlScriptExecutor;
       if (executor == null) {
@@ -196,7 +229,8 @@ public interface TableLoaderBuilder {
         table,
         insertingWithPresetAutonums,
         insertingUnderAutonumLimit,
-        truncateBeforeLoad);
+        truncateBeforeLoad,
+        batchSize);
     }
   }
 }

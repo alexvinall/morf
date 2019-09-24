@@ -24,6 +24,13 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Properties;
 
+import org.alfasoftware.morf.dataset.DataSetConsumer;
+import org.alfasoftware.morf.dataset.Record;
+import org.alfasoftware.morf.metadata.Column;
+import org.alfasoftware.morf.metadata.DataType;
+import org.alfasoftware.morf.metadata.Index;
+import org.alfasoftware.morf.metadata.Table;
+import org.alfasoftware.morf.xml.XmlStreamProvider.XmlOutputStreamProvider;
 import org.apache.commons.lang.StringUtils;
 import org.apache.xml.serializer.Method;
 import org.apache.xml.serializer.OutputPropertiesFactory;
@@ -34,21 +41,14 @@ import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.AttributesImpl;
 
-import org.alfasoftware.morf.dataset.DataSetConsumer;
-import org.alfasoftware.morf.dataset.Record;
-import org.alfasoftware.morf.metadata.Column;
-import org.alfasoftware.morf.metadata.DataType;
-import org.alfasoftware.morf.metadata.Index;
-import org.alfasoftware.morf.metadata.Table;
-import org.alfasoftware.morf.xml.XmlStreamProvider.XmlOutputStreamProvider;
-
 /**
  * Serialises data sets to XML.
  *
  * <p>The output from this class can be sent directly to the file system by using the
  * constructor {@link #XmlDataSetConsumer(File)}. Alternatively the output from this
  * class can be sent to one or many streams by calling the constructor
- * {@link #XmlDataSetConsumer(XmlOutputStreamProvider)}.</p>
+ * accepting the {@link XmlOutputStreamProvider}.
+ * </p>
  *
  * @author Copyright (c) Alfa Financial Software 2009
  */
@@ -58,6 +58,11 @@ public class XmlDataSetConsumer implements DataSetConsumer {
    * Attributes implementation for use when no attributes are present on a node.
    */
   private static final Attributes EMPTY_ATTRIBUTES = new AttributesImpl();
+
+  /**
+   * The format version we are writing
+   */
+  private static final String FORMAT_VERSION = "4";
 
   /**
    * Controls the behaviour of the consumer when running against a directory.
@@ -89,7 +94,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
    * specified by <var>file</var>.
    *
    * <p>The serialised output can be written to a single archive or multiple data files:</p>
-   * <p><ul>
+   * <ul>
    * <li>If <var>file</var> identifies a directory then each table in the data set is
    * serialised to a separate XML file within that directory.</li>
    * <li>If <var>file</var> identifies a file name then the file will be created or replaced with
@@ -108,7 +113,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
    * specified by <var>file</var>.
    *
    * <p>The serialised output can be written to a single archive or multiple data files:</p>
-   * <p><ul>
+   * <ul>
    * <li>If <var>file</var> identifies a directory then each table in the data set is
    * serialised to a separate XML file within that directory.</li>
    * <li>If <var>file</var> identifies a file name then the file will be created or replaced with
@@ -147,6 +152,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
    *
    * @param xmlOutputStreamProvider Provides streams to receive the XML content
    * for the data in the data set.
+   * @param clearDestinationBehaviour The behaviour of the consumer when running against a directory.
    */
   public XmlDataSetConsumer(XmlOutputStreamProvider xmlOutputStreamProvider, ClearDestinationBehaviour clearDestinationBehaviour) {
     super();
@@ -197,7 +203,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
 
         contentHandler.startDocument();
         AttributesImpl tableAttributes = new AttributesImpl();
-        tableAttributes.addAttribute(XmlDataSetNode.URI, XmlDataSetNode.VERSION_ATTRIBUTE, XmlDataSetNode.VERSION_ATTRIBUTE, XmlDataSetNode.STRING_TYPE, "2");
+        tableAttributes.addAttribute(XmlDataSetNode.URI, XmlDataSetNode.VERSION_ATTRIBUTE, XmlDataSetNode.VERSION_ATTRIBUTE, XmlDataSetNode.STRING_TYPE, FORMAT_VERSION);
 
         contentHandler.startElement(XmlDataSetNode.URI, XmlDataSetNode.TABLE_NODE, XmlDataSetNode.TABLE_NODE, tableAttributes);
         outputTableMetaData(table, contentHandler);
@@ -207,8 +213,14 @@ public class XmlDataSetConsumer implements DataSetConsumer {
           AttributesImpl rowValueAttributes = new AttributesImpl();
           for (Column column : table.columns()) {
             String value = getValue(record, column, table.getName());
+
             if (value != null) {
-              rowValueAttributes.addAttribute(XmlDataSetNode.URI, column.getName(), column.getName(), XmlDataSetNode.STRING_TYPE, value);
+              rowValueAttributes.addAttribute(
+                XmlDataSetNode.URI,
+                column.getName(),
+                column.getName(),
+                XmlDataSetNode.STRING_TYPE,
+                Escaping.escapeCharacters(value));
             }
           }
 
@@ -221,7 +233,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
       } finally {
         outputStream.close();
       }
-    } catch (Exception e) {
+    } catch (RuntimeException|SAXException|IOException e) {
       throw new RuntimeException("Error consuming table [" + table.getName() + "]", e);
     }
   }
@@ -236,7 +248,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
    * @return the value of column from record
    */
   protected String getValue(Record record, Column column, @SuppressWarnings("unused") String table) {
-    return record.getValue(column.getName());
+    return record.getString(column.getName());
   }
 
 
@@ -274,7 +286,7 @@ public class XmlDataSetConsumer implements DataSetConsumer {
     }
 
     // we need to sort the indexes by name to ensure consistency, since indexes don't have an explicit "sequence" in databases.
-    List<Index> indexes = new ArrayList<Index>(table.indexes());
+    List<Index> indexes = new ArrayList<>(table.indexes());
     Collections.sort(indexes, new Comparator<Index>() {
       @Override
       public int compare(Index o1, Index o2) {

@@ -18,12 +18,12 @@ package org.alfasoftware.morf.upgrade;
 import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static org.alfasoftware.morf.metadata.SchemaUtils.index;
 import static org.alfasoftware.morf.metadata.SchemaUtils.table;
+import static org.alfasoftware.morf.sql.SqlUtils.field;
+import static org.alfasoftware.morf.sql.SqlUtils.select;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
-
-import org.junit.Test;
 
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Table;
@@ -50,7 +50,10 @@ import org.alfasoftware.morf.sql.element.MathsOperator;
 import org.alfasoftware.morf.sql.element.NullFieldLiteral;
 import org.alfasoftware.morf.sql.element.TableReference;
 import org.alfasoftware.morf.sql.element.WhenCondition;
+import org.junit.Test;
+
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 
 /**
  * Tests that the string generation for human readable upgrade paths is correct.
@@ -114,6 +117,36 @@ public class TestHumanReadableStatementHelper {
       String.format("Create table new_table with 1 column and no indexes" +
       "%n    - A non-null column called column_one [STRING(10)]"),
       HumanReadableStatementHelper.generateAddTableString(newTable)
+    );
+  }
+
+
+  @Test
+  public void testAddTableFromSelectSingleColumn() {
+    Table newTable = table("new_table").columns(
+        column("column_one", DataType.STRING, 10)
+      );
+
+    assertEquals(
+      String.format("Create table new_table with 1 column and no indexes" +
+      "%n    - A non-null column called column_one [STRING(10)] from foo from Wherever where bar is 1"),
+      HumanReadableStatementHelper.generateAddTableFromString(newTable, select(field("foo")).from("Wherever").where(field("bar").eq(1)))
+    );
+  }
+
+
+  @Test
+  public void testAddTableFromSelectMultiColumn() {
+    Table newTable = table("new_table").columns(
+      column("column_one", DataType.STRING, 10),
+      column("column_two", DataType.STRING, 10)
+    );
+
+    assertEquals(
+      String.format("Create table new_table with 2 columns and no indexes" +
+      "%n    - A non-null column called column_one [STRING(10)]" +
+      "%n    - A non-null column called column_two [STRING(10)] from foo, bar from Wherever where bar is 1"),
+      HumanReadableStatementHelper.generateAddTableFromString(newTable, select(field("foo"), field("bar")).from("Wherever").where(field("bar").eq(1)))
     );
   }
 
@@ -497,6 +530,7 @@ public class TestHumanReadableStatementHelper {
     final Criterion gte = Criterion.greaterThanOrEqualTo(new FieldReference("c"), 42);
     final Criterion inValues = Criterion.in(new FieldReference("d"), 1, 2, 3);
     final Criterion inSelect = Criterion.in(new FieldReference("e"), new SelectStatement(new FieldReference("foo")).from("Bar"));
+    final Criterion inList = Criterion.in(new FieldReference("f"), Lists.newArrayList(1, 2, 3));
     final Criterion isNotNull = Criterion.isNotNull(new FieldReference("g"));
     final Criterion isNull = Criterion.isNull(new FieldReference("h"));
     final Criterion like = Criterion.like(new FieldReference("i"), "%x%");
@@ -512,6 +546,7 @@ public class TestHumanReadableStatementHelper {
     assertEquals("GTE", "c is greater than or equal to 42", HumanReadableStatementHelper.generateCriterionString(gte));
     assertEquals("IN", "d is in (1, 2, 3)", HumanReadableStatementHelper.generateCriterionString(inValues));
     assertEquals("IN", "e is in Bar", HumanReadableStatementHelper.generateCriterionString(inSelect));
+    assertEquals("IN", "f is in (1, 2, 3)", HumanReadableStatementHelper.generateCriterionString(inList));
     assertEquals("ISNOTNULL", "g is not null", HumanReadableStatementHelper.generateCriterionString(isNotNull));
     assertEquals("ISNULL", "h is null", HumanReadableStatementHelper.generateCriterionString(isNull));
     assertEquals("LIKE", "i is like '%x%'", HumanReadableStatementHelper.generateCriterionString(like));
@@ -528,6 +563,7 @@ public class TestHumanReadableStatementHelper {
     assertEquals("!GTE", "c is less than 42", HumanReadableStatementHelper.generateCriterionString(Criterion.not(gte)));
     assertEquals("!IN", "d is not in (1, 2, 3)", HumanReadableStatementHelper.generateCriterionString(Criterion.not(inValues)));
     assertEquals("!IN", "e is not in Bar", HumanReadableStatementHelper.generateCriterionString(Criterion.not(inSelect)));
+    assertEquals("!IN", "f is not in (1, 2, 3)", HumanReadableStatementHelper.generateCriterionString(Criterion.not(inList)));
     assertEquals("!ISNOTNULL", "g is null", HumanReadableStatementHelper.generateCriterionString(Criterion.not(isNotNull)));
     assertEquals("!ISNULL", "h is not null", HumanReadableStatementHelper.generateCriterionString(Criterion.not(isNull)));
     assertEquals("!LIKE", "i is not like '%x%'", HumanReadableStatementHelper.generateCriterionString(Criterion.not(like)));
@@ -548,8 +584,9 @@ public class TestHumanReadableStatementHelper {
     final NullFieldLiteral defaultValue = new NullFieldLiteral();
     final WhenCondition when1 = new WhenCondition(Criterion.eq(new FieldReference("foo"), "Y"), new FieldLiteral(1234));
     final WhenCondition when2 = new WhenCondition(Criterion.eq(new FieldReference("foo"), "N"), new FieldLiteral(5678));
-    final CaseStatement field = new CaseStatement(defaultValue, when1, when2);
-    field.as("bar");
+    CaseStatement field = new CaseStatement(defaultValue, when1, when2);
+
+    field = (CaseStatement)field.as("bar");
 
     assertEquals("Incorrect strings generated",
       String.format("%n    - If foo is 'Y' then set bar to 1234" +
@@ -564,10 +601,10 @@ public class TestHumanReadableStatementHelper {
    */
   @Test
   public void testCastField() {
-    final Cast field1 = new Cast(new FieldReference("foo"), DataType.DECIMAL, 10);
-    field1.as("bar");
-    final Cast field2 = new Cast(new FieldLiteral("1234"), DataType.DECIMAL, 10);
-    field2.as("bar");
+     Cast field1 = new Cast(new FieldReference("foo"), DataType.DECIMAL, 10);
+     field1 = field1.as("bar");
+     Cast field2 = new Cast(new FieldLiteral("1234"), DataType.DECIMAL, 10);
+     field2 = field2.as("bar");
 
     assertEquals("Incorrect string generated",
       String.format("%n    - Set bar to foo's value"),
@@ -583,8 +620,9 @@ public class TestHumanReadableStatementHelper {
    */
   @Test
   public void testConcatenatedField() {
-    final ConcatenatedField field = new ConcatenatedField(new FieldReference("foo"), new FieldLiteral(1234), new FieldLiteral("bar"));
-    field.as("bar");
+
+    ConcatenatedField field = new ConcatenatedField(new FieldReference("foo"), new FieldLiteral(1234), new FieldLiteral("bar"));
+    field =  (ConcatenatedField)field.as("bar");
 
     assertEquals("Incorrect string generated",
       String.format("%n    - Set bar to the concatenation of foo, 1234 and 'bar'"),
@@ -598,8 +636,8 @@ public class TestHumanReadableStatementHelper {
   @Test
   public void testFieldFromSelect() {
     final SelectStatement select = new SelectStatement(new FieldReference("foo")).from("ExampleData");
-    final FieldFromSelect field = new FieldFromSelect(select);
-    field.as("bar");
+    FieldFromSelect field = new FieldFromSelect(select);
+    field = (FieldFromSelect)field.as("bar");
 
     assertEquals("Incorrect string generated",
       String.format("%n    - Set bar to foo from ExampleData"),
@@ -613,8 +651,8 @@ public class TestHumanReadableStatementHelper {
   @Test
   public void testFieldFromSelectWithJoin() {
     final SelectStatement select = new SelectStatement(new FieldReference("foo")).from("ExampleData").innerJoin(new TableReference("OtherTable"), Criterion.eq(new FieldReference("x"), new FieldReference("y")));
-    final FieldFromSelect field = new FieldFromSelect(select);
-    field.as("bar");
+    FieldFromSelect field = new FieldFromSelect(select);
+    field = (FieldFromSelect)field.as("bar");
 
     assertEquals("Incorrect string generated",
       String.format("%n    - Set bar to foo from ExampleData and OtherTable, joined on x is y"),
@@ -630,8 +668,8 @@ public class TestHumanReadableStatementHelper {
     final SelectStatement select = new SelectStatement(new FieldReference("foo")).from("ExampleData")
         .innerJoin(new TableReference("OtherTable"), Criterion.eq(new FieldReference("x"), new FieldReference("y")))
         .where(Criterion.eq(new FieldReference("z"), 1));
-    final FieldFromSelect field = new FieldFromSelect(select);
-    field.as("bar");
+    FieldFromSelect field = new FieldFromSelect(select);
+    field = (FieldFromSelect)field.as("bar");
 
     assertEquals("Incorrect string generated",
       String.format("%n    - Set bar to foo from ExampleData and OtherTable, joined on x is y, where z is 1"),
@@ -645,8 +683,8 @@ public class TestHumanReadableStatementHelper {
   @Test
   public void testFieldFromSelectFirst() {
     final SelectFirstStatement select = new SelectFirstStatement(new FieldReference("foo")).from("ExampleData").orderBy(new FieldReference("foo"));
-    final FieldFromSelectFirst field = new FieldFromSelectFirst(select);
-    field.as("bar");
+    FieldFromSelectFirst field = new FieldFromSelectFirst(select);
+    field = (FieldFromSelectFirst)field.as("bar");
 
     assertEquals("Incorrect string generated",
       String.format("%n    - Set bar to first foo from ExampleData ordered by foo"),

@@ -15,42 +15,31 @@
 
 package org.alfasoftware.morf.sql.element;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotSame;
+import static org.alfasoftware.morf.sql.SqlUtils.literal;
 
-import org.junit.Test;
+import java.util.Collections;
+import java.util.List;
+
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 /**
  * Unit tests {@link NullFieldLiteral}
  *
  * @author Copyright (c) Alfa Financial Software 2011
  */
-public class TestNullFieldLiteral {
+@RunWith(Parameterized.class)
+public class TestNullFieldLiteral extends AbstractAliasedFieldTest<AliasedField> {
 
-
-  /**
-   * Verify that deep copy works as expected for an alias null field literal.
-   */
-  @Test
-  public void testDeepCopyWithAlias() {
-    NullFieldLiteral nullFieldLiteral = new NullFieldLiteral();
-    nullFieldLiteral.as("testName");
-    NullFieldLiteral nullCopy = (NullFieldLiteral)nullFieldLiteral.deepCopy();
-
-    assertEquals("Field literal alias does not match", nullFieldLiteral.getAlias(), nullCopy.getAlias());
+  @Parameters(name = "{0}")
+  public static List<Object[]> data() {
+    return Collections.singletonList(
+      testCase(
+        "Null",
+        () -> new NullFieldLiteral(),
+        () -> literal(1)
+      )
+    );
   }
-
-
-  /**
-   * Verify that deep copy works as expected for a null field literal, and
-   * returns a different object to the one that is passed in.
-   */
-  @Test
-  public void testDeepCopyReturnsDifferentObjects() {
-    NullFieldLiteral nullFieldLiteral = new NullFieldLiteral();
-    NullFieldLiteral nullCopy = (NullFieldLiteral)nullFieldLiteral.deepCopy();
-
-    assertNotSame("Same object is returned at deep copy", nullFieldLiteral, nullCopy);
-  }
-
 }

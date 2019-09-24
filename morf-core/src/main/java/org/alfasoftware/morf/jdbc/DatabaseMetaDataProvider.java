@@ -15,10 +15,10 @@
 
 package org.alfasoftware.morf.jdbc;
 
-import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static com.google.common.collect.Lists.newArrayList;
 import static com.google.common.collect.Lists.transform;
 import static com.google.common.collect.Maps.uniqueIndex;
+import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -34,9 +34,6 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
 import org.alfasoftware.morf.metadata.Column;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Index;
@@ -45,6 +42,9 @@ import org.alfasoftware.morf.metadata.SchemaUtils.ColumnBuilder;
 import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.metadata.View;
 import org.alfasoftware.morf.sql.SelectStatement;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Ordering;
@@ -117,7 +117,7 @@ public class DatabaseMetaDataProvider implements Schema {
     if (tableNameMappings == null) {
       // Create a TreeMap instead of a HashMap so that the contents are sorted
       // alphabetically rather than being in a random order
-      tableNameMappings = new TreeMap<String, String>();
+      tableNameMappings = new TreeMap<>();
       readTableNames();
     }
     return tableNameMappings;
@@ -135,7 +135,7 @@ public class DatabaseMetaDataProvider implements Schema {
       return viewMap;
     }
 
-    viewMap = new TreeMap<String, View>(String.CASE_INSENSITIVE_ORDER);
+    viewMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     populateViewMap(viewMap);
     return viewMap;
   }
@@ -218,19 +218,15 @@ public class DatabaseMetaDataProvider implements Schema {
    * @param tableName the table to query for.
    * @return a collection of the primary keys.
    */
-  private List<String> getPrimaryKeys(String tableName) {
+  protected List<String> getPrimaryKeys(String tableName) {
     List<PrimaryKeyColumn> columns = newArrayList();
     try {
       final DatabaseMetaData databaseMetaData = connection.getMetaData();
 
-      ResultSet primaryKeyResults = databaseMetaData.getPrimaryKeys(null, schemaName, tableName);
-
-      try {
+      try (ResultSet primaryKeyResults = databaseMetaData.getPrimaryKeys(null, schemaName, tableName)) {
         while (primaryKeyResults.next()) {
           columns.add(new PrimaryKeyColumn(primaryKeyResults.getShort(5), primaryKeyResults.getString(4)));
         }
-      } finally {
-        primaryKeyResults.close();
       }
     } catch (SQLException sqle) {
       throw new RuntimeSqlException("Error reading primary keys for table [" + tableName + "]", sqle);
@@ -265,10 +261,9 @@ public class DatabaseMetaDataProvider implements Schema {
       try {
         final DatabaseMetaData databaseMetaData = connection.getMetaData();
 
-        ResultSet columnResults = databaseMetaData.getColumns(null, schemaName, tableName, null);
-        try {
+        try (ResultSet columnResults = databaseMetaData.getColumns(null, schemaName, tableName, null)) {
 
-          List<Column> rawColumns = new LinkedList<Column>();
+          List<Column> rawColumns = new LinkedList<>();
 
           while (columnResults.next()) {
             String columnName = columnResults.getString(COLUMN_NAME);
@@ -296,8 +291,6 @@ public class DatabaseMetaDataProvider implements Schema {
           }
 
           return sortByPrimaryKey(primaryKeys, rawColumns);
-        } finally {
-          columnResults.close();
         }
       } catch (SQLException sqle) {
         throw new RuntimeSqlException(sqle);
@@ -310,6 +303,10 @@ public class DatabaseMetaDataProvider implements Schema {
 
   /**
    * Sorts a list of columns so that the primary key columns appear first in key order.
+   * @param primaryKeys The list of the primary key column names
+   * @param rawColumns The list of columns to re-arrange
+   * @return A list containing all the {@link Column} instances in the supplied list re-arranged so that the primary
+   * key columns appear first.
    */
   protected List<Column> sortByPrimaryKey(List<String> primaryKeys, List<Column> rawColumns) {
     // Map allowing retrieval of columns by name
@@ -341,15 +338,15 @@ public class DatabaseMetaDataProvider implements Schema {
 
 
   /**
-   * Implements the default method for obtaining the information as to whether a column is autonumbered,
-   * and if so, from what start value, from the database.  Optionally overridden in specific RDBMS implementations
-   * where the information is available from different sources.
+   * Implements the default method for obtaining additional column information. For the default method this is only
+   * as to whether a column is autonumbered, and if so, from what start value, from the database.  Optionally overridden in specific RDBMS implementations
+   * where the information is available from different sources and additional column information is available.
    *
    * @param tableName The name of the table.
    * @param columnBuilder The column under construction.
    * @param columnMetaData The JDBC column metdata, if required.
    * @return The modified column
-   * @throws SQLException
+   * @throws SQLException when a problem in retrieving information from the database is encountered.
    */
   @SuppressWarnings("unused")
   protected ColumnBuilder setAdditionalColumnMetadata(String tableName, ColumnBuilder columnBuilder, ResultSet columnMetaData) throws SQLException {
@@ -367,11 +364,10 @@ public class DatabaseMetaDataProvider implements Schema {
     try {
       final DatabaseMetaData databaseMetaData = connection.getMetaData();
 
-      ResultSet indexResultSet = databaseMetaData.getIndexInfo(null, schemaName, tableName, false, false);
-      try {
-        List<Index> indexes = new LinkedList<Index>();
+      try (ResultSet indexResultSet = databaseMetaData.getIndexInfo(null, schemaName, tableName, false, false)) {
+        List<Index> indexes = new LinkedList<>();
 
-        SortedMap<String, List<String>> columnsByIndexName = new TreeMap<String, List<String>>();
+        SortedMap<String, List<String>> columnsByIndexName = new TreeMap<>();
 
         // there's one entry for each column in the index
         // the results are sorted by ordinal position already
@@ -397,7 +393,7 @@ public class DatabaseMetaDataProvider implements Schema {
           List<String> columnNames = columnsByIndexName.get(indexName);
           // maybe create a new one
           if (columnNames == null) {
-            columnNames = new LinkedList<String>();
+            columnNames = new LinkedList<>();
             boolean unique = !indexResultSet.getBoolean(4);
 
             indexes.add(new IndexImpl(indexName, unique, columnNames));
@@ -407,11 +403,7 @@ public class DatabaseMetaDataProvider implements Schema {
           // add this column to the list
           columnNames.add(columnName);
         }
-
         return indexes;
-
-      } finally {
-        indexResultSet.close();
       }
     } catch (SQLException sqle) {
       throw new RuntimeSqlException("Error reading metadata for table [" + tableName + "]", sqle);
@@ -428,25 +420,37 @@ public class DatabaseMetaDataProvider implements Schema {
     try {
       final DatabaseMetaData databaseMetaData = connection.getMetaData();
 
-      ResultSet views = databaseMetaData.getTables(null, schemaName, null, new String[] { "VIEW" });
-      try {
+      try (ResultSet views = databaseMetaData.getTables(null, schemaName, null, new String[]{"VIEW"})) {
         while (views.next()) {
           final String viewName = views.getString(3);
           log.debug("Found view [" + viewName + "]");
           viewMap.put(viewName, new View() {
-            @Override public String getName() { return viewName; }
-            @Override public boolean knowsSelectStatement() { return false; }
-            @Override public boolean knowsDependencies() { return false; }
-            @Override public SelectStatement getSelectStatement() {
+            @Override
+            public String getName() {
+              return viewName;
+            }
+
+            @Override
+            public boolean knowsSelectStatement() {
+              return false;
+            }
+
+            @Override
+            public boolean knowsDependencies() {
+              return false;
+            }
+
+            @Override
+            public SelectStatement getSelectStatement() {
               throw new UnsupportedOperationException("Cannot return SelectStatement as [" + viewName + "] has been loaded from the database");
             }
-            @Override public String[] getDependencies() {
+
+            @Override
+            public String[] getDependencies() {
               throw new UnsupportedOperationException("Cannot return dependencies as [" + viewName + "] has been loaded from the database");
             }
           });
         }
-      } finally {
-        views.close();
       }
     } catch (SQLException sqle) {
       throw new RuntimeSqlException("Error reading metadata for views", sqle);
@@ -512,22 +516,19 @@ public class DatabaseMetaDataProvider implements Schema {
       case Types.NUMERIC:
       case Types.DECIMAL:
         return DataType.DECIMAL;
-
       case Types.CHAR:
       case Types.VARCHAR:
       case Types.LONGVARCHAR:
       case Types.LONGNVARCHAR:
       case Types.NVARCHAR:
         return DataType.STRING;
-
       case Types.BOOLEAN:
       case Types.BIT:
-        return DataType.BOOLEAN;
-      case Types.BINARY:
         return DataType.BOOLEAN;
       case Types.DATE:
         return DataType.DATE;
       case Types.BLOB:
+      case Types.BINARY:
       case Types.VARBINARY:
       case Types.LONGVARBINARY:
         return DataType.BLOB;
@@ -568,7 +569,7 @@ public class DatabaseMetaDataProvider implements Schema {
    */
   @Override
   public Collection<Table> tables() {
-    List<Table> result = new ArrayList<Table>();
+    List<Table> result = new ArrayList<>();
     for (String tableName : tableNames()) {
       result.add(getTable(tableName));
     }
@@ -584,8 +585,7 @@ public class DatabaseMetaDataProvider implements Schema {
     try {
       final DatabaseMetaData databaseMetaData = connection.getMetaData();
 
-      ResultSet tables = databaseMetaData.getTables(null, schemaName, null, TABLE_TYPES);
-      try {
+      try (ResultSet tables = databaseMetaData.getTables(null, schemaName, null, TABLE_TYPES)) {
         while (tables.next()) {
           String tableName = tables.getString(3);
           String tableSchemaName = tables.getString(2);
@@ -593,8 +593,6 @@ public class DatabaseMetaDataProvider implements Schema {
 
           foundTable(tableName, tableSchemaName, tableType);
         }
-      } finally {
-        tables.close();
       }
     } catch (SQLException sqle) {
       throw new RuntimeSqlException("SQLException in readTableNames()", sqle);

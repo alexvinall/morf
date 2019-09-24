@@ -15,33 +15,40 @@
 
 package org.alfasoftware.morf.sql.element;
 
-import static org.junit.Assert.assertEquals;
+import static org.alfasoftware.morf.sql.SqlUtils.caseStatement;
+import static org.alfasoftware.morf.sql.SqlUtils.literal;
+import static org.alfasoftware.morf.sql.SqlUtils.when;
 
-import org.junit.Test;
+import java.util.Collections;
+import java.util.List;
+
+import org.alfasoftware.morf.sql.SqlUtils;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 /**
  * Tests {@link CaseStatement}
  *
  * @author Copyright (c) Alfa Financial Software 2011
  */
-public class TestCaseStatement {
+@RunWith(Parameterized.class)
+public class TestCaseStatement extends AbstractAliasedFieldTest<CaseStatement> {
 
-
-  /**
-   * Verify that deep copy works as expected for an alias null field literal.
-   */
-  @Test
-  public void testDeepCopyWithAlias() {
-    CaseStatement cs = new CaseStatement(
-      new FieldLiteral(111),
-      new WhenCondition(
-        Criterion.eq(new FieldLiteral('A'), new FieldLiteral('B')),
-        new FieldLiteral('C')
+  @Parameters(name = "{0}")
+  public static List<Object[]> data() {
+    return Collections.singletonList(
+      testCase(
+        "Test 1",
+        () -> SqlUtils.caseStatement(SqlUtils.when(literal(1).eq(literal(2))).then(literal(3))).otherwise(literal(4)),
+        () -> caseStatement(when(literal(1).eq(literal(2))).then(literal(3))).otherwise(literal(5)),
+        () -> caseStatement(when(literal(1).eq(literal(2))).then(literal(4))).otherwise(literal(4)),
+        () -> caseStatement(when(literal(1).eq(literal(3))).then(literal(3))).otherwise(literal(4)),
+        () -> caseStatement(
+                when(literal(1).eq(literal(2))).then(literal(3)),
+                when(literal(1).eq(literal(2))).then(literal(3))
+              ).otherwise(literal(4))
       )
     );
-    cs.as("testAlias");
-    CaseStatement csCopy = (CaseStatement)cs.deepCopy();
-
-    assertEquals("Field literal alias does not match", cs.getAlias(), csCopy.getAlias());
   }
 }

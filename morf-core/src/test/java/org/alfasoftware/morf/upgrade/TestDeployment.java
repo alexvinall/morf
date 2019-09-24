@@ -15,6 +15,7 @@
 
 package org.alfasoftware.morf.upgrade;
 
+import static com.google.common.collect.FluentIterable.from;
 import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static org.alfasoftware.morf.metadata.SchemaUtils.schema;
 import static org.alfasoftware.morf.metadata.SchemaUtils.table;
@@ -22,7 +23,6 @@ import static org.alfasoftware.morf.metadata.SchemaUtils.view;
 import static org.alfasoftware.morf.sql.SqlUtils.field;
 import static org.alfasoftware.morf.sql.SqlUtils.select;
 import static org.alfasoftware.morf.sql.SqlUtils.tableRef;
-import static com.google.common.collect.FluentIterable.from;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
@@ -33,15 +33,12 @@ import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
-
 import org.alfasoftware.morf.jdbc.SqlDialect;
+import org.alfasoftware.morf.jdbc.SqlScriptExecutor;
+import org.alfasoftware.morf.jdbc.SqlScriptExecutorProvider;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Schema;
 import org.alfasoftware.morf.metadata.Table;
@@ -53,6 +50,12 @@ import org.alfasoftware.morf.sql.element.FieldLiteral;
 import org.alfasoftware.morf.upgrade.UpgradePath.UpgradePathFactory;
 import org.alfasoftware.morf.upgrade.additions.UpgradeScriptAddition;
 import org.alfasoftware.morf.upgrade.db.DatabaseUpgradeTableContribution;
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
+
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -66,6 +69,8 @@ import com.google.common.collect.Sets;
 public class TestDeployment {
 
   private final SqlDialect dialect = mock(SqlDialect.class);
+  private final SqlScriptExecutorProvider executorProvider = mock(SqlScriptExecutorProvider.class);
+  private final SqlScriptExecutor executor = mock(SqlScriptExecutor.class);
 
   private final UpgradePathFactory upgradePathFactory = mock(UpgradePathFactory.class);
 
@@ -75,9 +80,10 @@ public class TestDeployment {
       new Answer<UpgradePath>() {
         @Override
         public UpgradePath answer(InvocationOnMock invocation) throws Throwable {
-          return new UpgradePath(Sets.<UpgradeScriptAddition>newHashSet(), (SqlDialect)invocation.getArguments()[0]);
+          return new UpgradePath(Sets.<UpgradeScriptAddition>newHashSet(), (SqlDialect)invocation.getArguments()[0], Collections.emptyList(), Collections.emptyList());
         }
       });
+    when(executorProvider.get()).thenReturn(executor);
   }
 
   /**
@@ -103,13 +109,20 @@ public class TestDeployment {
     );
 
     // When
-    Deployment deployment = new Deployment(dialect, null, upgradePathFactory);
+    Deployment deployment = new Deployment(dialect, executorProvider, upgradePathFactory);
     UpgradePath path = deployment.getPath(targetSchema, Lists.<Class<? extends UpgradeStep>>newArrayList());
 
     // Then
     assertTrue("Steps to apply", path.hasStepsToApply());
     assertEquals("Steps", "[]", path.getSteps().toString());
     assertEquals("SQL", ImmutableList.of("A", "B", "D", "C"), path.getSql());
+
+    // When
+    deployment.deploy(targetSchema);
+
+    // Then
+    verify(executor).execute(ImmutableList.of("A", "B", "D", "C"));
+
   }
 
 
@@ -135,7 +148,7 @@ public class TestDeployment {
     );
 
 
-    Deployment deployment = new Deployment(dialect, null, upgradePathFactory);
+    Deployment deployment = new Deployment(dialect, executorProvider, upgradePathFactory);
     UpgradePath path = deployment.getPath(targetSchema, Lists.<Class<? extends UpgradeStep>>newArrayList());
 
     // Then
@@ -153,6 +166,12 @@ public class TestDeployment {
       values.add(((FieldLiteral)value).getValue());
 
     assertEquals("Values", "[FOOVIEW, E]", values.toString());
+
+    // When
+    deployment.deploy(targetSchema);
+
+    // Then
+    verify(executor).execute(ImmutableList.of("A", "B", "C", "D"));
   }
 
 
@@ -163,14 +182,14 @@ public class TestDeployment {
   public void testGetPathWithUpgradeSteps() {
     // Given
     Table testTable     = table("Foo").columns(column("name", DataType.STRING, 32));
-    Collection<Class<? extends UpgradeStep>> stepsToApply = new ArrayList<Class<? extends UpgradeStep>>();
+    Collection<Class<? extends UpgradeStep>> stepsToApply = new ArrayList<>();
     stepsToApply.add(AddFooTable.class);
     when(dialect.tableDeploymentStatements(same(testTable))).thenReturn(ImmutableList.of("A"));
 
     Schema targetSchema = schema(testTable);
 
     // When
-    Deployment deployment = new Deployment(dialect, null, upgradePathFactory);
+    Deployment deployment = new Deployment(dialect, executorProvider, upgradePathFactory);
     UpgradePath path = deployment.getPath(targetSchema, stepsToApply);
 
     // Then
@@ -193,7 +212,13 @@ public class TestDeployment {
     assertEquals("Number of columns", 3, stmt.getValues().size());
     assertEquals("UUID", "ab1b9f5a-cb3b-473c-8ec6-c6c1134f500f", values.get(0).toString());
     assertEquals("Description", "org.alfasoftware.morf.upgrade.TestDeployment$AddFooTable", values.get(1).toString());
-    assertEquals("Date", 1, from(stmt.getValues()).filter(org.alfasoftware.morf.sql.element.Function.class).toList().size());
+    assertEquals("Date", 1, from(stmt.getValues()).filter(org.alfasoftware.morf.sql.element.Cast.class).toList().size());
+
+    // When
+    deployment.deploy(targetSchema);
+
+    // Then
+    verify(executor).execute(ImmutableList.of("A"));
   }
 
 

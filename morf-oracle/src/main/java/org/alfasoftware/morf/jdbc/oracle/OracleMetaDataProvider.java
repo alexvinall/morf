@@ -15,10 +15,9 @@
 
 package org.alfasoftware.morf.jdbc.oracle;
 
-import static org.alfasoftware.morf.jdbc.DatabaseMetaDataProviderUtils.getAutoIncrementStartValue;
-import static org.alfasoftware.morf.metadata.SchemaUtils.column;
-import static org.alfasoftware.morf.metadata.SchemaUtils.table;
 import static java.util.Collections.sort;
+import static org.alfasoftware.morf.jdbc.DatabaseMetaDataProviderUtils.getAutoIncrementStartValue;
+import static org.alfasoftware.morf.metadata.SchemaUtils.table;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -28,16 +27,15 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 
 import org.alfasoftware.morf.jdbc.DatabaseMetaDataProvider;
 import org.alfasoftware.morf.jdbc.DatabaseMetaDataProviderUtils;
@@ -46,10 +44,14 @@ import org.alfasoftware.morf.metadata.Column;
 import org.alfasoftware.morf.metadata.DataType;
 import org.alfasoftware.morf.metadata.Index;
 import org.alfasoftware.morf.metadata.Schema;
-import org.alfasoftware.morf.metadata.SchemaUtils.ColumnBuilder;
 import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.metadata.View;
 import org.alfasoftware.morf.sql.SelectStatement;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import com.google.common.base.Suppliers;
 
 
 
@@ -58,7 +60,7 @@ import org.alfasoftware.morf.sql.SelectStatement;
  *
  * @author Copyright (c) Alfa Financial Software 2010
  */
-class OracleMetaDataProvider implements Schema {
+public class OracleMetaDataProvider implements Schema {
 
   /**
    * Standard log line.
@@ -234,52 +236,32 @@ class OracleMetaDataProvider implements Schema {
           tableMap.put(tableName, currentTable);
         }
 
-        int precision = dataPrecision == null ? 0 : dataPrecision;
-        int scale = dataScale == null ? 0 : dataScale;
-
-        boolean nullable = "Y".equals(nullableStr);
-        DataType dataType = dataTypeForColumn(dataTypeName, commentType);
-
         boolean primaryKey = false;
         List<String> primaryKeyColumns = primaryKeys.get(tableName.toUpperCase());
         if (primaryKeyColumns != null) {
           primaryKey = primaryKeyColumns.contains(columnName.toUpperCase());
         }
 
-        /**
-         * WEB-13657 Some database may not have the comment that describes the
-         * type of the column. In this case the ID/version columns would be
-         * mapped as DECIMAL when we actually want them to be
-         * BIG_INTEGER/INTEGER respectively. So if we don't have a commentType
-         * and we're currently a DECIMAL...
-         */
-        if (commentType == null && dataType == DataType.DECIMAL) {
-          // Oracle doesn't store the precision for integer columns - so it's
-          // the version
-          if (dataPrecision == null) {
-            dataType = DataType.INTEGER;
-            // Only the ID column can be the primary key
-          } else if (dataPrecision.equals(Integer.valueOf(19)) && columnName.equalsIgnoreCase("id")) {
-            dataType = DataType.BIG_INTEGER;
-          }
-        }
-
-        // where the width comes from depends on the data type
-        scale = DataType.STRING.equals(dataType) ? 0 : scale;
-        int width = DataType.STRING == dataType ? dataLength : precision;
-        ColumnBuilder column = column(columnName, dataType, width, scale).defaultValue(defaultValue);
-        column = nullable ? column.nullable() : column;
-        column = primaryKey ? column.primaryKey() : column;
-
         int autoIncrementFrom = getAutoIncrementStartValue(columnComment);
         boolean isAutoIncrement = autoIncrementFrom != -1;
         autoIncrementFrom = autoIncrementFrom == -1 ? 1 : autoIncrementFrom;
-        column = isAutoIncrement ? column.autoNumbered(autoIncrementFrom) : column;
 
-        currentTable.columns().add(column);
-      }
-    });
+        // Deferred type column required as tables not yet excluded will be processed at this stage.
+        currentTable.columns().add(
+          new DeferredTypeColumn(
+            dataTypeName,
+            dataLength,
+            dataPrecision == null ? 0 : dataPrecision,
+            dataScale == null ? 0 : dataScale,
+            commentType,
+            columnName,
+            "Y".equals(nullableStr), // nullable
+            primaryKey, isAutoIncrement, autoIncrementFrom, defaultValue
+          )
+        );
+      }});
 
+    //
     // -- Stage 2b: Re-order the columns as per the primary key order...
     //
     for( Entry<String, Table> entry : tableMap.entrySet()) {
@@ -296,9 +278,22 @@ class OracleMetaDataProvider implements Schema {
       log.debug("Loading indexes: [" + tableMap.size() + "]");
     }
 
+    Supplier<Map<String, Set<String>>> indexPartitions = Suppliers.memoize(() -> {
+      Map<String, Set<String>> result = new HashMap<>();
+      runSQL("select index_name, status from ALL_IND_PARTITIONS where index_owner=?",
+        resultSet -> {
+          while(resultSet.next()) {
+            result.computeIfAbsent(resultSet.getString(1), k -> new HashSet<>()).add(resultSet.getString(2));
+          }
+        });
+      return result;
+      }
+    );
+
+
     // -- Stage 3: find the index names...
     //
-    final String getIndexNamesSql = "select table_name, index_name, uniqueness from ALL_INDEXES where owner=? order by table_name, index_name";
+    final String getIndexNamesSql = "select table_name, index_name, uniqueness, status from ALL_INDEXES where owner=? order by table_name, index_name";
     runSQL(getIndexNamesSql, new ResultSetHandler() {
       @Override
       public void handle(ResultSet resultSet) throws SQLException {
@@ -307,6 +302,7 @@ class OracleMetaDataProvider implements Schema {
           String tableName = resultSet.getString(1);
           String indexName = resultSet.getString(2);
           String uniqueness = resultSet.getString(3);
+          String status = resultSet.getString(4);
 
           Table currentTable = tableMap.get(tableName);
 
@@ -321,9 +317,10 @@ class OracleMetaDataProvider implements Schema {
           }
 
           final boolean unique = "UNIQUE".equals(uniqueness);
+          boolean isValid = isValid(status, indexName, indexPartitions);
 
           // don't output the primary key as an index
-          if(isPrimaryKeyIndex(indexName)) {
+          if(isPrimaryKeyIndex(indexName) && isValid) {
             if (log.isDebugEnabled()) {
               log.debug(String.format("Ignoring index [%s] on table [%s] as it is a primary key index", indexName, tableName));
             }
@@ -333,6 +330,11 @@ class OracleMetaDataProvider implements Schema {
           // Chop up the index name
           if (indexName.toUpperCase().startsWith(currentTable.getName().toUpperCase())) {
             indexName = currentTable.getName() + indexName.substring(currentTable.getName().length());
+          }
+
+          if (!isValid) {
+            log.fatal("Index [" + indexName + "] is not in a valid state");
+            indexName = indexName + "<UNUSABLE>"; // this will cause the schema checker to find a mismatch and also provide a good hint in the log messages what was wrong
           }
 
           final String indexNameFinal = indexName;
@@ -364,6 +366,8 @@ class OracleMetaDataProvider implements Schema {
           log.debug(String.format("Loaded %d indexes", indexCount));
         }
       }
+
+
     });
 
     long pointThree = System.currentTimeMillis();
@@ -433,6 +437,75 @@ class OracleMetaDataProvider implements Schema {
     if (log.isDebugEnabled()) log.debug(String.format("Loaded index column list in %dms", end - pointThree));
 
     log.info(String.format("Read table metadata in %dms", end - start));
+  }
+
+
+  private boolean isValid(String status, String indexName, Supplier<Map<String, Set<String>>> indexPartitions) {
+    if ("VALID".equals(status)
+        || "true".equals(System.getProperty("org.alfasoftware.morf.jdbc.oracle.OracleMetaDataProvider.disableIndexValidation"))) {
+      return true;
+    }
+
+    if ("UNUSABLE".equals(status)) {
+      return false;
+    }
+
+    // if we have another status (usually 'N/A') it is likely because the index is partitioned, so we have to check the status on ALL_IND_PARTITIONS
+    if (indexPartitions.get().containsKey(indexName)) {
+      return !indexPartitions.get().get(indexName).contains("UNUSABLE");
+    }
+
+    log.warn("Unable to determine validity of index [" + indexName + "] based on status [" + status + "]");
+
+    return false;
+  }
+
+
+  /**
+   * Get our {@link DataType} from the Oracle type. This serves the same purpose
+   * as {@link DatabaseMetaDataProvider#dataTypeFromSqlType(int, String, int)} but is
+   * entirely Oracle specific.
+   *
+   * @param dataTypeName The Oracle type name.
+   * @param commentType the type of the column stored in a comment.
+   * @return The DataType.
+   * @throws UnexpectedDataTypeException If data type cannot be parsed.
+   */
+  private static DataType dataTypeForColumn(String columnName, String dataTypeName, String commentType) {
+    /*
+     * Oracle stores all numeric types as 'NUMBER', so we have no easy way of
+     * identifying fields such as 'int' or 'big int'. As such, the actual data
+     * type of the column is stored in a comment against that column. Hence, if
+     * we're given a type from a comment then try and use that, only falling
+     * back to the matching below if we don't have/find one.
+     *
+     * It's not possible to reverse engineer the type from the database because
+     * of things such as foreign keys: although the ID column is a 'big int', the
+     * actual value on a column that links to this ID will be stored as a decimal
+     * in most cases.
+     */
+    if (StringUtils.isNotEmpty(commentType)) {
+      for (DataType dataType : DataType.values()) {
+        if (dataType.toString().equals(commentType)) {
+          return dataType;
+        }
+      }
+    }
+
+    if ("NVARCHAR2".equals(dataTypeName) || "VARCHAR2".equals(dataTypeName)) {
+      return DataType.STRING;
+    } else if ("NUMBER".equals(dataTypeName)) {
+      return DataType.DECIMAL;
+    } else if ("BLOB".equals(dataTypeName)) {
+      return DataType.BLOB;
+    } else if ("NCLOB".equals(dataTypeName)) {
+      return DataType.CLOB;
+    } else if ("DATE".equals(dataTypeName)) {
+      return DataType.DATE;
+    }
+    else {
+      throw new UnexpectedDataTypeException("Unsupported data type [" + dataTypeName + "]" + " in [" + columnName + "]");
+    }
   }
 
 
@@ -526,53 +599,6 @@ class OracleMetaDataProvider implements Schema {
 
 
   /**
-   * Get our {@link DataType} from the Oracle type. This serves the same purpose
-   * as {@link DatabaseMetaDataProvider#dataTypeFromSqlType(int, String, int)} but is
-   * entirely Oracle specific.
-   *
-   * @param dataTypeName The Oracle type name.
-   * @param commentType the type of the column stored in a comment.
-   * @return The DataType.
-   */
-  private DataType dataTypeForColumn(String dataTypeName, String commentType) {
-    /*
-     * Oracle stores all numeric types as 'NUMBER', so we have no easy way of
-     * identifying fields such as 'int' or 'big int'. As such, the actual data
-     * type of the column is stored in a comment against that column. Hence, if
-     * we're given a type from a comment then try and use that, only falling
-     * back to the matching below if we don't have/find one.
-     *
-     * It's not possible to reverse engineer the type from the database because
-     * of things such as foreign keys: although the ID column is a 'big int', the
-     * actual value on a column that links to this ID will be stored as a decimal
-     * in most cases.
-     */
-    if (StringUtils.isNotEmpty(commentType)) {
-      for (DataType dataType : DataType.values()) {
-        if (dataType.toString().equals(commentType)) {
-          return dataType;
-        }
-      }
-    }
-
-    if ("NVARCHAR2".equals(dataTypeName) || "VARCHAR2".equals(dataTypeName)) {
-      return DataType.STRING;
-    } else if ("NUMBER".equals(dataTypeName)) {
-      return DataType.DECIMAL;
-    } else if ("BLOB".equals(dataTypeName)) {
-      return DataType.BLOB;
-    } else if ("NCLOB".equals(dataTypeName)) {
-      return DataType.CLOB;
-    } else if ("DATE".equals(dataTypeName)) {
-      return DataType.DATE;
-    }
-    else {
-      throw new RuntimeException("Unexpected Oracle datatype: ["+dataTypeName+"]");
-    }
-  }
-
-
-  /**
    * Handler for {@link ResultSet}s from some SQL.
    */
   private interface ResultSetHandler {
@@ -646,6 +672,15 @@ class OracleMetaDataProvider implements Schema {
 
 
   /**
+   * {@inheritDoc}
+   *
+   * <p>The {@link Table} implementation returned may contain {@link Column} implementations
+   * which evaluate the metadata elements ({@link Column#getType()}, {@link Column#getWidth()}
+   * etc.) lazily.  If the database column type is not supported, this may throw an
+   * {@link UnexpectedDataTypeException} when evaluated.  This allows tables with unsupported
+   * data types to be enumerated (and thus co-exist in the database schema) but not be supported
+   * by the application.</p>
+   *
    * @see org.alfasoftware.morf.metadata.Schema#getTable(java.lang.String)
    */
   @Override
@@ -664,6 +699,15 @@ class OracleMetaDataProvider implements Schema {
 
 
   /**
+   * {@inheritDoc}
+   *
+   * <p>The {@link Table} implementation returned may contain {@link Column} implementations
+   * which evaluate the metadata elements ({@link Column#getType()}, {@link Column#getWidth()}
+   * etc.) lazily.  If the database column type is not supported, this may throw an
+   * {@link UnexpectedDataTypeException} when evaluated.  This allows tables with unsupported
+   * data types to be enumerated (and thus co-exist in the database schema) but not be supported
+   * by the application.</p>
+   *
    * @see org.alfasoftware.morf.metadata.Schema#tables()
    */
   @Override
@@ -749,6 +793,123 @@ class OracleMetaDataProvider implements Schema {
       } else {
         return 0; // Neither column a primary key; no re-ordering
       }
+    }
+  }
+
+
+  /**
+   * Holds a column's properties.
+   */
+  private static final class ColumnProperties {
+    DataType dataType;
+    int width;
+    int scale;
+  }
+
+
+  /**
+   * This implementation of {@link Column} defers determining the data type of
+   * the column to allow for tables which may use data types not supported by
+   * Morf to be included in a schema. Exceptions regarding the incompatibility
+   * will only be thrown if the data type is queried.
+   */
+  private static final class DeferredTypeColumn implements Column{
+
+    private final String columnName;
+    private final boolean nullable;
+    private final boolean primaryKey;
+    private final boolean autoIncrement;
+    private final int autoIncrementFrom;
+    private final String defaultValue;
+
+    private final com.google.common.base.Supplier<ColumnProperties> properties;
+
+    DeferredTypeColumn(String dataTypeName, int dataLength, int precision, int scale, String commentType, String columName,
+        boolean nullable, boolean primaryKey, boolean autoIncrement, int autoIncrementFrom, String defaultValue) {
+      super();
+      this.columnName = columName;
+      this.nullable = nullable;
+      this.primaryKey = primaryKey;
+      this.autoIncrement = autoIncrement;
+      this.autoIncrementFrom = autoIncrementFrom;
+      this.defaultValue = defaultValue;
+      this.properties = Suppliers.memoize(() -> {
+        ColumnProperties columnProperties = new ColumnProperties();
+        DataType dataType = dataTypeForColumn(columnName, dataTypeName, commentType);
+
+        if (commentType == null && dataType == DataType.DECIMAL) {
+          // Oracle doesn't store the precision for integer columns - so it's
+          // the version
+          if (precision == 0) {
+            dataType = DataType.INTEGER;
+            // Only the ID column can be the primary key
+          } else if (precision == 19 && columnName.equalsIgnoreCase("id")) {
+            dataType = DataType.BIG_INTEGER;
+          }
+        }
+
+        columnProperties.scale = DataType.STRING.equals(dataType) ? 0 : scale;
+        columnProperties.width = DataType.STRING == dataType ? dataLength : precision;
+        columnProperties.dataType = dataType;
+        return columnProperties;
+      });
+    }
+
+
+    @Override
+    public boolean isNullable() {
+      return nullable;
+    }
+
+    @Override
+    public boolean isPrimaryKey() {
+      return primaryKey;
+    }
+
+    @Override
+    public boolean isAutoNumbered() {
+      return autoIncrement;
+    }
+
+    @Override
+    public String getName() {
+      return columnName;
+    }
+
+    @Override
+    public String getDefaultValue() {
+      return defaultValue;
+    }
+
+    @Override
+    public int getAutoNumberStart() {
+      return autoIncrementFrom;
+    }
+
+    @Override
+    public DataType getType() {
+      return properties.get().dataType;
+    }
+
+    @Override
+    public int getWidth() {
+      return properties.get().width;
+    }
+
+    @Override
+    public int getScale() {
+      return properties.get().scale;
+    }
+  }
+
+
+  /**
+   * Exception thrown when data type evaluated is unsupported.
+   */
+  public static final class UnexpectedDataTypeException extends RuntimeException {
+
+    private UnexpectedDataTypeException(String string) {
+      super(string);
     }
   }
 }

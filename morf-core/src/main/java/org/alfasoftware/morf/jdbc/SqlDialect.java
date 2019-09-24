@@ -18,18 +18,16 @@ package org.alfasoftware.morf.jdbc;
 import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static org.alfasoftware.morf.metadata.SchemaUtils.schema;
 import static org.alfasoftware.morf.metadata.SchemaUtils.table;
+import static org.alfasoftware.morf.sql.SelectStatement.select;
 import static org.alfasoftware.morf.sql.SqlUtils.insert;
 import static org.alfasoftware.morf.sql.SqlUtils.tableRef;
 import static org.alfasoftware.morf.sql.UnionSetOperator.UnionStrategy.ALL;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.StringWriter;
-import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,12 +39,15 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
 
 import org.alfasoftware.morf.dataset.Record;
-import org.alfasoftware.morf.dataset.RecordHelper;
 import org.alfasoftware.morf.metadata.Column;
+import org.alfasoftware.morf.metadata.DataSetUtils;
+import org.alfasoftware.morf.metadata.DataSetUtils.RecordBuilder;
 import org.alfasoftware.morf.metadata.DataType;
+import org.alfasoftware.morf.metadata.DataValueLookup;
 import org.alfasoftware.morf.metadata.Index;
 import org.alfasoftware.morf.metadata.Schema;
 import org.alfasoftware.morf.metadata.Table;
@@ -57,8 +58,10 @@ import org.alfasoftware.morf.sql.InsertStatement;
 import org.alfasoftware.morf.sql.MergeStatement;
 import org.alfasoftware.morf.sql.SelectFirstStatement;
 import org.alfasoftware.morf.sql.SelectStatement;
+import org.alfasoftware.morf.sql.SelectStatementBuilder;
 import org.alfasoftware.morf.sql.SetOperator;
 import org.alfasoftware.morf.sql.SqlElementCallback;
+import org.alfasoftware.morf.sql.SqlUtils;
 import org.alfasoftware.morf.sql.Statement;
 import org.alfasoftware.morf.sql.TruncateStatement;
 import org.alfasoftware.morf.sql.UnionSetOperator;
@@ -86,17 +89,13 @@ import org.alfasoftware.morf.sql.element.WhenCondition;
 import org.alfasoftware.morf.sql.element.WindowFunction;
 import org.alfasoftware.morf.upgrade.ChangeColumn;
 import org.alfasoftware.morf.util.ObjectTreeTraverser;
-import org.apache.commons.codec.binary.Base64;
-import org.apache.commons.codec.binary.Base64InputStream;
 import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.RandomStringUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
 import org.joda.time.LocalDate;
 import org.joda.time.Months;
 
-import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
@@ -109,7 +108,7 @@ import com.google.common.collect.Lists;
  *
  * @author Copyright (c) Alfa Financial Software 2010
  */
-public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConverter {
+public abstract class SqlDialect {
 
   /**
    *
@@ -138,6 +137,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Returns the database schema name. May be null.
+   * @return The schema name
    */
   public String getSchemaName() {
     return schemaName;
@@ -232,17 +232,17 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *
    * @param table table on which the index exists
    * @param fromIndexName The index to rename
-   * @param toIndex The new index name
+   * @param toIndexName The new index name
    * @return SQL Statements required to rename an index
    */
   public abstract Collection<String> renameIndexStatements(Table table, String fromIndexName, String toIndexName);
 
 
   /**
-   * @param tableName - name of table to perform this action on
+   * @param table - table to perform this action on
    * @param oldPrimaryKeyColumns - the existing primary key columns
    * @param newPrimaryKeyColumns - the new primary key columns
-   * @return
+   * @return SQL Statements required to change the primary key columns
    */
   public abstract Collection<String> changePrimaryKeyColumns(Table table, List<String> oldPrimaryKeyColumns,
       List<String> newPrimaryKeyColumns);
@@ -261,6 +261,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * Creates SQL to execute prior to bulk-inserting to a table.
    *
    * @param table {@link Table} to be inserted to.
+   * @param insertingUnderAutonumLimit  Determines whether we are inserting under an auto-numbering limit.
    * @return SQL statements to be executed prior to insert.
    */
   @SuppressWarnings("unused")
@@ -273,7 +274,9 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * Creates SQL to execute after bulk-inserting to a table.
    *
    * @param table The table that was populated.
-   * @return SQL statements to execute once the table has been populated.
+   * @param executor The executor to use
+   * @param connection The connection to use
+   * @param insertingUnderAutonumLimit  Determines whether we are inserting under an auto-numbering limit.
    */
   @SuppressWarnings("unused")
   public void postInsertWithPresetAutonumStatements(Table table,SqlScriptExecutor executor,Connection connection, boolean insertingUnderAutonumLimit) {
@@ -286,7 +289,8 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * <p>Generally databases do not need to do anything special here, but MySQL can lose the value.</p>
    *
    * @param table The table to repair.
-   * @return SQL statements to execute
+   * @param executor The executor to use
+   * @param connection The connection to use
    */
   @SuppressWarnings("unused")
   public void repairAutoNumberStartPosition(Table table,SqlScriptExecutor executor,Connection connection) {
@@ -687,6 +691,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
+   * @param tableRef The table reference from which the schema name will be extracted
    * @return The schema prefix of the specified table (including the dot), the
    *         dialect's schema prefix or blank if neither is specified (in that
    *         order).
@@ -808,6 +813,18 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
+   * Returns any SQL code which should be added between a <code>UPDATE</code> and the table
+   * for dialect-specific reasons.
+   *
+   * @param updateStatement The update statement
+   * @return Any hint code required.
+   */
+  protected String updateStatementPreTableDirectives(@SuppressWarnings("unused") UpdateStatement updateStatement) {
+    return StringUtils.EMPTY;
+  }
+
+
+  /**
    * Returns any SQL code which should be added at the end of a statement for dialect-specific reasons.
    *
    * @param selectStatement The select statement
@@ -820,6 +837,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Default behaviour for FOR UPDATE. Can be overridden.
+   * @return The String representation of the FOR UPDATE clause.
    */
   protected String getForUpdateSql() {
     return " FOR UPDATE";
@@ -868,6 +886,8 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *
    * @param result joins will be appended here
    * @param stmt statement with joins clauses
+   * @param innerJoinKeyword The keyword for INNER JOIN
+   * @param <T> The type of {@link AbstractSelectStatement}
    */
   protected <T extends AbstractSelectStatement<T>> void appendJoins(StringBuilder result, AbstractSelectStatement<T> stmt, String innerJoinKeyword) {
     for (Join currentJoin : stmt.getJoins()) {
@@ -881,6 +901,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *
    * @param result order by clause will be appended here
    * @param stmt statement with order by clause
+   * @param <T> The type of AbstractSelectStatement
    */
   protected <T extends AbstractSelectStatement<T>> void appendOrderBy(StringBuilder result, AbstractSelectStatement<T> stmt) {
     if (!stmt.getOrderBys().isEmpty()) {
@@ -964,6 +985,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *
    * @param result where clause will be appended here
    * @param stmt statement with where clause
+   * @param <T> The type of AbstractSelectStatement
    */
   protected <T extends AbstractSelectStatement<T>> void appendWhere(StringBuilder result, AbstractSelectStatement<T> stmt) {
     if (stmt.getWhereCriterion() != null) {
@@ -978,6 +1000,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *
    * @param result from clause will be appended here
    * @param stmt statement with from clause
+   * @param <T> The type of AbstractSelectStatement
    */
   protected <T extends AbstractSelectStatement<T>> void appendFrom(StringBuilder result, AbstractSelectStatement<T> stmt) {
     if (stmt.getTable() != null) {
@@ -1073,8 +1096,9 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Get the SQL expression for NULL values handling.
-   * @param orderByField
-   * @param result
+   * @param orderByField The order by clause
+   * @return The resulting SQL String
+   *
    */
   protected String getSqlForOrderByFieldNullValueHandling(FieldReference orderByField) {
 
@@ -1096,7 +1120,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * An additional clause to use in SELECT statements where there is no select
-   * source, which allows us to include "FROM <dummy table>" on RDBMSes such as
+   * source, which allows us to include "FROM &lt;dummy table&gt;" on RDBMSes such as
    * Oracle where selecting from no table is not allowed but the RDBMS provides
    * a dummy table (such as "dual").
    *
@@ -1164,6 +1188,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
+   * @param stmt The statement.
    * @return The keyword to use for an inner join on the specified statement.  This only differs
    *         in response to hints.
    */
@@ -1175,7 +1200,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
   /**
    * Converts a {@link UnionSetOperator} into SQL.
    *
-   * @param field the field to convert.
+   * @param operator the union to convert.
    * @return a string representation of the field.
    */
   private String getSqlFrom(UnionSetOperator operator) {
@@ -1302,16 +1327,14 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
           stringBuilder.append(", id");
 
           // Augment the select statement
-          sourceStatement = sourceStatement.deepCopy();
-          sourceStatement.appendFields(idValue);
+          sourceStatement = sourceStatement.shallowCopy().fields(idValue).build();
         }
 
         if (!explicitVersionColumn && hasColumnNamed(stmt.getTable().getName(), metadata, "version")) {
           stringBuilder.append(", version");
 
           // Augment the select statement
-          sourceStatement = sourceStatement.deepCopy();
-          sourceStatement.appendFields(new FieldLiteral(0).as("version"));
+          sourceStatement = sourceStatement.shallowCopy().fields(SqlUtils.literal(0).as("version")).build();
         }
       }
 
@@ -1437,8 +1460,8 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
   /**
    * Converts a list of values on a criterion into a comma-separated list.
    *
-   * @param criterion
-   * @return
+   * @param criterion The criterion to convert
+   * @return The converted criterion as a String
    */
   @SuppressWarnings("unchecked")
   protected String getSqlForCriterionValueList(Criterion criterion) {
@@ -1467,12 +1490,9 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * @return a string representation of the field
    */
   protected String getSqlFrom(AliasedField field) {
-    if (field instanceof NullFieldLiteral) {
-      return "null";
-    }
 
     if (field instanceof SqlParameter) {
-      return String.format(":%s", ((SqlParameter)field).getImpliedName());
+      return String.format(":%s", ((SqlParameter)field).getMetadata().getName());
     }
 
     if (field instanceof FieldLiteral) {
@@ -1575,7 +1595,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
   protected String getSqlFrom(FieldLiteral field) {
     switch (field.getDataType()) {
       case BOOLEAN:
-        return Boolean.valueOf(field.getValue()) ? "1" : "0";
+        return getSqlFrom(Boolean.valueOf(field.getValue()));
       case STRING:
         return makeStringLiteral(field.getValue());
       case DATE:
@@ -1587,6 +1607,11 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
       case BLOB:
       case CLOB:
         return field.getValue();
+      case NULL:
+        if (field.getValue() != null) {
+          throw new UnsupportedOperationException("Literals of type NULL must have a null value. Got [" + field.getValue() + "]");
+        }
+        return "null";
       default:
         throw new UnsupportedOperationException("Cannot convert the specified field literal into an SQL literal: ["
             + field.getValue() + "]");
@@ -1651,7 +1676,12 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
       case AVERAGE:
         return "AVG(" + getSqlFrom(function.getArguments().get(0)) + ")";
       case LENGTH:
+      case BLOB_LENGTH:
         return getSqlforLength(function);
+      case SOME:
+        return getSqlForSome(function.getArguments().get(0));
+      case EVERY:
+        return getSqlForEvery(function.getArguments().get(0));
       case MAX:
       case MIN:
       case SUM:
@@ -1859,6 +1889,30 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
+   * Converts the some function into SQL.
+   *
+   * @param aliasedField the field to get the maximum for.
+   * @return a string representation of the SQL.
+   * @see org.alfasoftware.morf.sql.element.Function#some(AliasedField)
+   */
+  protected String getSqlForSome(AliasedField aliasedField) {
+    return "MAX(" + getSqlFrom(aliasedField) + ")";
+  }
+
+
+  /**
+   * Converts the every function into SQL.
+   *
+   * @param aliasedField the field to get the minimum for.
+   * @return a string representation of the SQL.
+   * @see org.alfasoftware.morf.sql.element.Function#every(AliasedField)
+   */
+  protected String getSqlForEvery(AliasedField aliasedField) {
+    return "MIN(" + getSqlFrom(aliasedField) + ")";
+  };
+
+
+  /**
    * Converts the power function into SQL.
    *
    * @param function the function to convert.
@@ -1920,7 +1974,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
-   * @return
+   * @return The name of the coalesce function
    */
   protected String getCoalesceFunctionName() {
     return "COALESCE";
@@ -1995,7 +2049,20 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    */
   protected String getSqlFrom(Cast cast) {
     return String.format("CAST(%s AS %s)", getSqlFrom(cast.getExpression()),
-      getColumnRepresentation(cast.getDataType(), cast.getWidth(), cast.getScale()));
+      getDataTypeRepresentation(cast.getDataType(), cast.getWidth(), cast.getScale()));
+  }
+
+
+  /**
+   * Gets the column representation for the datatype, etc.
+   *
+   * @param dataType the column datatype.
+   * @param width the column width.
+   * @param scale the column scale.
+   * @return a string representation of the column definition.
+   */
+  protected String getDataTypeRepresentation(DataType dataType, int width, int scale) {
+    return getColumnRepresentation(dataType, width, scale);
   }
 
 
@@ -2021,7 +2088,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Converts the DateToYyyymmdd function into SQL. Assumes an 8 digit date is
-   * supplied in YYYYMMDD using the {@linkplain DataType.STRING} format. TODO:
+   * supplied in YYYYMMDD using the {@linkplain DataType#STRING} format. TODO:
    * does it?
    *
    * @param function the function to convert.
@@ -2033,7 +2100,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
   /**
    * Converts the DateToYyyymmddHHmmss function into SQL. Assumes an 8 digit
    * date concatenated with a 6 digit time is supplied in YYYYMMDDHHmmss using
-   * the {@linkplain DataType.STRING} format.
+   * the {@linkplain DataType#STRING} format.
    *
    * @param function the function to convert.
    * @return a string representation of the SQL.
@@ -2043,7 +2110,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Converts the YYYYMMDDToDate function into SQL. Assumes an 8 digit date is
-   * supplied in YYYYMMDD using the {@linkplain DataType.STRING} format.
+   * supplied in YYYYMMDD using the {@linkplain DataType#STRING} format.
    *
    * @param function the function to convert.
    * @return a string representation of the SQL.
@@ -2052,7 +2119,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
-   * Converts the Now function into SQL.
+   * Converts the current time function into SQL and returns the timestamp of the database in UTC.
    *
    * @param function the function to convert.
    * @return a string representation of the SQL.
@@ -2082,7 +2149,9 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * Converts the LEFT_PAD function into SQL. This is the same format used for
    * H2, MySQL and Oracle. SqlServer implementation overrides this function.
    *
-   * @param function to convert
+   * @param field The field to pad
+   * @param length The length of the padding
+   * @param character The character to use for the padding
    * @return string representation of the SQL.
    */
   protected String getSqlForLeftPad(AliasedField field, AliasedField length, AliasedField character) {
@@ -2111,7 +2180,6 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
   /**
    * Converts the RANDOM function into SQL. This returns a random number between 0 and 1.
    *
-   * @param function the function to convert.
    * @return a string representation of the SQL.
    */
   protected String getSqlForRandom() {
@@ -2575,7 +2643,14 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
     StringBuilder sqlBuilder = new StringBuilder();
 
     // Add the preamble
-    sqlBuilder.append("DELETE FROM ");
+    sqlBuilder.append("DELETE ");
+
+    // For appropriate dialects, append the delete limit here
+    if (statement.getLimit().isPresent() && getDeleteLimitPreFromClause(statement.getLimit().get()).isPresent()) {
+      sqlBuilder.append(getDeleteLimitPreFromClause(statement.getLimit().get()).get() + " ");
+    }
+
+    sqlBuilder.append("FROM ");
 
     // Now add the from clause
     sqlBuilder.append(schemaNamePrefix(statement.getTable()));
@@ -2586,14 +2661,65 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
       sqlBuilder.append(String.format(" %s", statement.getTable().getAlias()));
     }
 
+    // Prepare to append the where clause or, for appropriate dialects, the delete limit
+    if (statement.getWhereCriterion() != null || statement.getLimit().isPresent() && getDeleteLimitWhereClause(statement.getLimit().get()).isPresent()) {
+      sqlBuilder.append(" WHERE ");
+    }
+
     // Now put the where clause in
     if (statement.getWhereCriterion() != null) {
-      sqlBuilder.append(" WHERE ");
       sqlBuilder.append(getSqlFrom(statement.getWhereCriterion()));
+    }
+
+    // Append the delete limit, for appropriate dialects
+    if (statement.getLimit().isPresent() && getDeleteLimitWhereClause(statement.getLimit().get()).isPresent()) {
+      if (statement.getWhereCriterion() != null) {
+        sqlBuilder.append(" AND ");
+      }
+
+      sqlBuilder.append(getDeleteLimitWhereClause(statement.getLimit().get()).get());
+    }
+
+    // For appropriate dialects, append the delete limit suffix
+    if (statement.getLimit().isPresent() && getDeleteLimitSuffix(statement.getLimit().get()).isPresent()) {
+      sqlBuilder.append(" " + getDeleteLimitSuffix(statement.getLimit().get()).get());
     }
 
     return sqlBuilder.toString();
   }
+
+
+  /**
+   * Returns the SQL that specifies the deletion limit ahead of the FROM clause, if any, for the dialect.
+   *
+   * @param limit The delete limit.
+   * @return The SQL fragment.
+   */
+  protected Optional<String> getDeleteLimitPreFromClause(int limit) {
+    return Optional.empty();
+  };
+
+
+  /**
+   * Returns the SQL that specifies the deletion limit in the WHERE clause, if any, for the dialect.
+   *
+   * @param limit The delete limit.
+   * @return The SQL fragment.
+   */
+  protected Optional<String> getDeleteLimitWhereClause(int limit) {
+    return Optional.empty();
+  };
+
+
+  /**
+   * Returns the SQL that specifies the deletion limit as a suffix, if any, for the dialect.
+   *
+   * @param limit The delete limit.
+   * @return The SQL fragment.
+   */
+  protected Optional<String> getDeleteLimitSuffix(int limit) {
+    return Optional.empty();
+  };
 
 
   /**
@@ -2615,6 +2741,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
     // Add the preamble
     sqlBuilder.append("UPDATE ");
+    sqlBuilder.append(updateStatementPreTableDirectives(statement));
 
     // Now add the from clause
     sqlBuilder.append(schemaNamePrefix(statement.getTable()));
@@ -2698,34 +2825,29 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * default for the field type will be used.
    * </p>
    *
-   * @param statement the source statement to expand
+   * @param insertStatement the source statement to expand
    * @param metadata the table metadata from the database
    * @return a new instance of {@link InsertStatement} with an expanded from
    *         table definition
    */
-  protected InsertStatement expandInsertStatement(final InsertStatement statement, Schema metadata) {
+  protected InsertStatement expandInsertStatement(final InsertStatement insertStatement, Schema metadata) {
     // If we're neither specified the source table nor the select statement then
     // throw and exception
-    if (statement.getFromTable() == null && statement.getSelectStatement() == null) {
+    if (insertStatement.getFromTable() == null && insertStatement.getSelectStatement() == null) {
       throw new IllegalArgumentException("Cannot expand insert statement as it has no from table specified");
     }
 
     // If we've already got a select statement then just return a copy of the
     // source insert statement
-    if (statement.getSelectStatement() != null) {
-      return copyInsertStatement(statement);
+    if (insertStatement.getSelectStatement() != null) {
+      return copyInsertStatement(insertStatement);
     }
 
-    Map<String, AliasedField> fieldDefaults = statement.getFieldDefaults();
-
-    InsertStatement result = new InsertStatement();
-
-    // Copy the destination table
-    result.into(statement.getTable());
+    Map<String, AliasedField> fieldDefaults = insertStatement.getFieldDefaults();
 
     // Expand the from table
-    String sourceTableName = statement.getFromTable().getName();
-    String destinationTableName = statement.getTable().getName();
+    String sourceTableName = insertStatement.getFromTable().getName();
+    String destinationTableName = insertStatement.getTable().getName();
 
     // Perform a couple of checks
     if (!metadata.tableExists(sourceTableName)) {
@@ -2746,17 +2868,18 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
     }
 
     // Build up the select statement from field list
-    SelectStatement selectStatement = new SelectStatement();
+    SelectStatementBuilder selectStatementBuilder = select();
+    List<AliasedField> resultFields = new ArrayList<>();
 
     for (Column currentColumn : metadata.getTable(destinationTableName).columns()) {
       String currentColumnName = currentColumn.getName();
 
       // Add the destination column
-      result.getFields().add(new FieldReference(currentColumnName));
+      resultFields.add(new FieldReference(currentColumnName));
 
       // If there is a default for this column in the defaults list then use it
       if (fieldDefaults.containsKey(currentColumnName)) {
-        selectStatement.getFields().add(fieldDefaults.get(currentColumnName));
+        selectStatementBuilder = selectStatementBuilder.fields(fieldDefaults.get(currentColumnName));
         continue;
       }
 
@@ -2764,17 +2887,20 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
       // them
       // and move on to the next column
       if (sourceColumns.containsKey(currentColumnName.toUpperCase())) {
-        selectStatement.getFields().add(new FieldReference(currentColumnName));
+        selectStatementBuilder = selectStatementBuilder.fields(new FieldReference(currentColumnName));
         continue;
       }
     }
-
     // Set the source table
-    selectStatement.from(statement.getFromTable());
+    SelectStatement selectStatement = selectStatementBuilder
+        .from(insertStatement.getFromTable())
+        .build();
 
-    result.from(selectStatement);
-
-    return result;
+   return InsertStatement.insert()
+               .into(insertStatement.getTable())
+               .fields(resultFields)
+               .from(selectStatement)
+               .build();
   }
 
 
@@ -2785,25 +2911,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * @return a new instance of the {@linkplain InsertStatement}
    */
   protected InsertStatement copyInsertStatement(final InsertStatement statement) {
-    InsertStatement result = new InsertStatement();
-
-    // Copy the destination table
-    result.into(statement.getTable());
-
-    // Copy the fields
-    result.getFields().addAll(statement.getFields());
-
-    // Copy the select statement, if any
-    if (statement.getSelectStatement() != null) {
-      result.from(statement.getSelectStatement().deepCopy());
-    }
-
-    // Copy the source table, if any
-    if (statement.getFromTable() != null) {
-      result.from(statement.getFromTable());
-    }
-
-    return result;
+    return statement.shallowCopy().build();
   }
 
 
@@ -2836,7 +2944,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * @param dataTable the table to update for.
    * @param generatedFieldName Name of the field which has a generated value to
    *          build an update statement for.
-   * @param tableName the table to insert the autonumber to.
+   * @param autoNumberTable the table to insert the autonumber to.
    * @param nameColumn the name of the name column.
    * @param valueColumn the name of the value column.
    * @return SQL allowing the repair of the AutoNumber table.
@@ -2850,9 +2958,9 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
     }
 
     List<String> sql = new ArrayList<>();
-    sql.add(String.format("DELETE FROM %s where %s = '%s'", qualifiedTableName(autoNumberTable), nameColumn,
+    sql.add(String.format("DELETE FROM %s where %s = '%s'", schemaNamePrefix(autoNumberTable) + autoNumberTable.getName(), nameColumn,
       autoNumberName));
-    sql.add(String.format("INSERT INTO %s (%s, %s) VALUES('%s', (%s))", qualifiedTableName(autoNumberTable),
+    sql.add(String.format("INSERT INTO %s (%s, %s) VALUES('%s', (%s))", schemaNamePrefix(autoNumberTable) + autoNumberTable.getName(),
       nameColumn, valueColumn, autoNumberName, getExistingMaxAutoNumberValue(dataTable, generatedFieldName)));
 
     return sql;
@@ -2861,82 +2969,6 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   protected String schemaNamePrefix(@SuppressWarnings("unused") Table tableRef) {
     return schemaNamePrefix();
-  }
-
-
-  /**
-   * Builds SQL statements to repair an autonumber value with a specific
-   * {@code value}.
-   *
-   * @param autoNumberName the name of the autonumber to update.
-   * @param value the value to update with.
-   * @param tableName the name of the table to update.
-   * @param nameColumn the name of the column that holds the autonumber name.
-   * @param valueColumn the name of the column that holds the autonumber value.
-   * @return SQL allowing repairing of an autonumber.
-   */
-  public List<String> buildSpecificAutonumberUpdate(String autoNumberName, long value, String tableName, String nameColumn,
-      String valueColumn) {
-    String actualAutoNumberName = getAutoNumberName(autoNumberName);
-
-    if (actualAutoNumberName.equals("autonumber")) {
-      return new ArrayList<>();
-    }
-
-    List<String> sql = new ArrayList<>();
-    sql.add(String.format("DELETE FROM %s%s where %s = '%s'", schemaNamePrefix(), tableName, nameColumn, actualAutoNumberName));
-    sql.add(String.format("INSERT INTO %s%s (%s, %s) VALUES('%s', %d)", schemaNamePrefix(), tableName, nameColumn, valueColumn,
-      actualAutoNumberName, value));
-
-    return sql;
-  }
-
-
-  /**
-   * Builds SQL to repair the value of an AutoNumber.
-   *
-   * @param dataTable the table to update for.
-   * @param fieldName Name of the generated field to update for.
-   * @param tableName the name of the Autonumber table.
-   * @param nameColumn the name of the column holding the autonumber name.
-   * @param valueColumn the name of the column holding the autonumber value.
-   * @return SQL allowing the repair of the AutoNumber.
-   */
-  public List<String> buildAutonumberUpdate(TableReference dataTable, String fieldName, String tableName, String nameColumn,
-      String valueColumn) {
-    String autoNumberName = getAutoNumberName(dataTable.getName());
-
-    if (autoNumberName.equals("autonumber")) {
-      return new ArrayList<>();
-    }
-
-    StringBuilder sql = new StringBuilder();
-    sql.append("MERGE INTO ");
-    sql.append(schemaNamePrefix());
-    sql.append(tableName);
-    sql.append(" A ");
-    sql.append("USING (");
-    sql.append(getExistingMaxAutoNumberValue(dataTable, fieldName));
-    sql.append(") S ");
-    sql.append("ON (A.");
-    sql.append(nameColumn);
-    sql.append(" = '");
-    sql.append(autoNumberName);
-    sql.append("') ");
-    sql.append("WHEN MATCHED THEN UPDATE SET A.");
-    sql.append(valueColumn);
-    sql.append(" = S.CurrentValue WHERE A.");
-    sql.append(valueColumn);
-    sql.append(" < S.CurrentValue ");
-    sql.append("WHEN NOT MATCHED THEN INSERT (");
-    sql.append(nameColumn);
-    sql.append(", ");
-    sql.append(valueColumn);
-    sql.append(") VALUES ('");
-    sql.append(autoNumberName);
-    sql.append("', S.CurrentValue)");
-
-    return ImmutableList.of(sql.toString());
   }
 
 
@@ -2971,11 +3003,11 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
     if (sourceReference == null) {
       return new FieldFromSelect(new SelectStatement(Function.isnull(new FieldReference(valueColumn), new FieldLiteral(1))).from(
-        new TableReference(autoNumberTable.getName())).where(
+        new TableReference(autoNumberTable.getName(), autoNumberTable.isTemporary())).where(
         new Criterion(Operator.EQ, new FieldReference(nameColumn), autoNumberName)));
     } else {
       return new MathsField(new FieldFromSelect(new SelectStatement(Function.isnull(new FieldReference(valueColumn),
-        new FieldLiteral(0))).from(new TableReference(autoNumberTable.getName())).where(
+        new FieldLiteral(0))).from(new TableReference(autoNumberTable.getName(), autoNumberTable.isTemporary())).where(
         new Criterion(Operator.EQ, new FieldReference(nameColumn), autoNumberName))), MathsOperator.PLUS, new FieldReference(
           sourceReference, "id"));
     }
@@ -3024,6 +3056,8 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *          include nullability of the column.
    * @param includeDefaultValue Indicates whether or not the produced SQL should
    *          include the default value of the column.
+   * @param includeColumnType ndicates whether or not the produced SQL should
+   *          include the type of the column.
    * @return The SQL representation for the column type.
    */
   protected String sqlRepresentationOfColumnType(Column column, boolean includeNullability, boolean includeDefaultValue, boolean includeColumnType) {
@@ -3049,6 +3083,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Creates the representation of the default clause literal value.
+   * @param column The column whose default will be converted.
    *
    * @return An SQL fragment representing the literal in a DEFAULT clause in an SQL statement
    */
@@ -3064,7 +3099,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * @param includeNullability Indicates whether or not the produced SQL should
    *          include nullability of the column.
    * @return The SQL representation for the column type.
-   * @see #sqlRepresentationOfColumnType(Column, boolean, boolean)
+   * @see #sqlRepresentationOfColumnType(Column, boolean, boolean, boolean)
    */
   protected String sqlRepresentationOfColumnType(Column column, boolean includeNullability) {
     return sqlRepresentationOfColumnType(column, includeNullability, true, true);
@@ -3076,7 +3111,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    *
    * @param column The column to map.
    * @return The SQL representation for the column type.
-   * @see #sqlRepresentationOfColumnType(Column, boolean, boolean)
+   * @see #sqlRepresentationOfColumnType(Column, boolean, boolean, boolean)
    */
   protected String sqlRepresentationOfColumnType(Column column) {
     StringBuilder defaultSqlRepresentation = new StringBuilder(sqlRepresentationOfColumnType(column, false, true, true));
@@ -3121,6 +3156,15 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
+   * Generate the SQL to run analysis on a table.
+   *
+   * @param table The table to run the analysis on.
+   * @return The SQL statements to analyse the table.
+   */
+  public abstract Collection<String> getSqlForAnalyseTable(Table table);
+
+
+  /**
    * Generate the SQL to change an existing column on a table.
    *
    * @param table The table to change the column definition on. (The column will
@@ -3152,17 +3196,6 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    */
   public Collection<String> indexDropStatements(@SuppressWarnings("unused") Table table, Index indexToBeRemoved) {
     return Arrays.asList("DROP INDEX " + indexToBeRemoved.getName());
-  }
-
-
-  /**
-   * Creates a qualified (with schema prefix) table name string, from a table reference.
-   *
-   * @param table The table metadata.
-   * @return The table's qualified name.
-   */
-  protected String qualifiedTableName(Table table) {
-    return schemaNamePrefix() + table.getName();
   }
 
 
@@ -3238,109 +3271,119 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
-   * Sets up a parameter on a {@link NamedParameterPreparedStatement} with the specified value
-   * from a {@link Record}.
+   * Sets up parameters on a {@link NamedParameterPreparedStatement} with a set of values.
    *
    * @param statement The {@link PreparedStatement} to set up
-   * @param column The {@link Column} definition on the target table
-   * @param parameter The name of the parameter.
-   * @param value The value, expressed as a string
-   * @throws {@link RuntimeException} if the data type is not supported or if the
+   * @param parameters The parameters.
+   * @param values The values.
+   * @throws RuntimeException if a data type is not supported or if a
    *         supplied string value cannot be converted to the column data type.
    */
-  public void prepareStatementParameter(NamedParameterPreparedStatement statement, SqlParameter parameter, String value) {
-    try {
-      switch (parameter.getMetadata().getType()) {
-        case BOOLEAN:
-          if (value != null) {
-            statement.setBoolean(parameter, Boolean.valueOf(value));
-          } else {
-            statement.setObject(parameter, null);
-          }
-          break;
-        case DATE:
-          if (value != null) {
-            statement.setDate(parameter, java.sql.Date.valueOf(value));
-          } else {
-            statement.setObject(parameter, null);
-          }
-          break;
-        case DECIMAL:
-          // this avoids mis-parsing 123.45 when we're in a
-          // comma-for-decimal-point locale
-          // (BigDecimal always expects a period)
-          statement.setBigDecimal(parameter, value == null ? null : new BigDecimal(value));
-          break;
-        case STRING:
+  public void prepareStatementParameters(NamedParameterPreparedStatement statement, Iterable<SqlParameter> parameters, DataValueLookup values) {
+    parameters.forEach(parameter -> {
+      try {
+        prepareStatementParameters(statement, values, parameter);
+      } catch (Exception e) {
+        throw new RuntimeException(String.format("Error setting parameter value, column [%s], value [%s] on prepared statement",
+          parameter.getMetadata().getName(), values.getObject(parameter.getMetadata())), e);
+      }
+    });
+  }
+
+
+  /**
+   * Sets up a parameter on {@link NamedParameterPreparedStatement} with a value.
+
+   * @param statement The {@link PreparedStatement} to set up
+   * @param values The values.
+   * @param parameter The parameters.
+   * @throws RuntimeException if a data type is not supported or if a
+   *         supplied string value cannot be converted to the column data type.
+   * @throws SQLException for JDBC errors.
+   */
+  public void prepareStatementParameters(NamedParameterPreparedStatement statement, DataValueLookup values, SqlParameter parameter) throws SQLException {
+    switch (parameter.getMetadata().getType()) {
+      case BIG_INTEGER:
+        Long longVal = values.getLong(parameter.getImpliedName());
+        if (longVal == null) {
+          statement.setObject(parameter, null);
+        } else {
+          statement.setLong(parameter, longVal);
+        }
+        break;
+      case BLOB:
+        byte[] blobVal = values.getByteArray(parameter.getImpliedName());
+        if (blobVal == null) {
+          statement.setBlob(parameter, new byte[] {});
+        } else {
+          statement.setBlob(parameter, blobVal);
+        }
+        break;
+      case BOOLEAN:
+        prepareBooleanParameter(statement, values.getBoolean(parameter.getImpliedName()), parameter);
+        break;
+      case DATE:
+        Date dateVal = values.getDate(parameter.getImpliedName());
+        if (dateVal == null) {
+          statement.setObject(parameter, null);
+        } else {
+          statement.setDate(parameter, new java.sql.Date(dateVal.getTime()));
+        }
+        break;
+      case DECIMAL:
+        statement.setBigDecimal(parameter, values.getBigDecimal(parameter.getImpliedName()));
+        break;
+      case INTEGER:
+        prepareIntegerParameter(statement, values.getInteger(parameter.getImpliedName()), parameter);
+        break;
+      case CLOB:
+      case STRING:
+        String stringVal = values.getString(parameter.getImpliedName());
+        if (stringVal == null || stringVal.equals("")) {
           // since web-9161 for *ALL* databases
           // - we are using EmptyStringHQLAssistant
           // - and store empty strings as null
-          if (value == null || value.equals("")) {
-            statement.setString(parameter, null);
-          } else {
-            statement.setString(parameter, value);
-          }
-          break;
-        case INTEGER:
-          if (value != null) {
-            statement.setInt(parameter, Integer.parseInt(value));
-          } else {
-            statement.setObject(parameter, null);
-          }
-          break;
-        case BIG_INTEGER:
-          if (value != null) {
-            statement.setLong(parameter, Long.parseLong(value));
-          } else {
-            statement.setObject(parameter, null);
-          }
-          break;
-        case BLOB:
-          if (value == null || value.equals("")) {
-            statement.setBlob(parameter, new byte[] {});
-          } else {
-            statement.setBlob(parameter, /* Replace with java.util.Base64.Encoder once we have Java 8 */ Base64.decodeBase64(value));
-          }
-          break;
-        case CLOB:
-          if (value == null || value.equals("")) {
-            statement.setString(parameter, null);
-          } else {
-            statement.setString(parameter, value);
-          }
-          break;
-
-        default:
-          throw new RuntimeException(String.format("Unexpected DataType [%s]", parameter.getMetadata().getType()));
-      }
-    } catch (SQLException e) {
-      throw new RuntimeException(String.format("Error setting parameter value, column [%s], value [%s] on prepared statement",
-        parameter.getMetadata().getName(), value), e);
+          statement.setString(parameter, null);
+        } else {
+          statement.setString(parameter, stringVal);
+        }
+        break;
+      default:
+        throw new RuntimeException(String.format("Unexpected DataType [%s]", parameter.getMetadata().getType()));
     }
   }
 
 
   /**
-   * Converts a column's value to a safe string. The code will replace nulls
-   * with the supplied <code>valueForNull</code> and convert decimals into a
-   * database safe representation.
+   * Overridable behaviour for mapping an integer parameter to a prepared statement.
    *
-   * @param column the column that the source value applies to
-   * @param sourceValue the value of the column
-   * @param valueForNull the value to use when the column is null
-   * @return a safe string representation of the column's value
+   * @param statement The statement.
+   * @param integerVal The integer value.
+   * @param parameter The parameter to map to.
+   * @throws SQLException If an exception occurs setting the parameter.
    */
-  protected String convertColumnValueToDatabaseSafeString(Column column, String sourceValue, String valueForNull) {
-
-    Comparable<?> comparableType = RecordHelper.convertToComparableType(column, sourceValue);
-
-    // Return the valueForNull if the comparableType was null.
-    if (comparableType == null) {
-      return valueForNull;
-    } else if (comparableType instanceof Boolean) {
-      return (Boolean) comparableType ? "1" : "0";
+  protected void prepareIntegerParameter(NamedParameterPreparedStatement statement, Integer integerVal, SqlParameter parameter) throws SQLException {
+    if (integerVal == null) {
+      statement.setObject(parameter, null);
     } else {
-      return comparableType.toString();
+      statement.setInt(parameter, integerVal);
+    }
+  }
+
+
+  /**
+   * Overridable behaviour for mapping a boolean parameter to a prepared statement.
+   *
+   * @param statement The statement.
+   * @param boolVal The boolean value.
+   * @param parameter The parameter to map to.
+   * @throws SQLException If an exception occurs setting the parameter.
+   */
+  protected void prepareBooleanParameter(NamedParameterPreparedStatement statement, Boolean boolVal, SqlParameter parameter) throws SQLException {
+    if (boolVal == null) {
+      statement.setObject(parameter, null);
+    } else {
+      statement.setBoolean(parameter, boolVal);
     }
   }
 
@@ -3359,7 +3402,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
   /**
    * Convert a string to an SQL comment
    *
-   * @param The comment string
+   * @param string The comment string
    * @return An SQL comment containing the comment string
    */
   public String convertCommentToSQL(String string) {
@@ -3377,71 +3420,83 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
-   * @see org.alfasoftware.morf.jdbc.DatabaseSafeStringToRecordValueConverter#databaseSafeStringtoRecordValue(org.alfasoftware.morf.metadata.DataType,
-   *      java.sql.ResultSet, int, java.lang.String)
-   * @throws {@link RuntimeSqlException} if the specified value cannot be fetched
-   *         (is missing or the incorrect type is specified)
-   * @throws {@link RuntimeException} if the specified field is a binary stream
-   *         and an error occurs accessing it.
+   * Given an ordered list of columns and a {@link ResultSet}, creates a
+   * {@link Record} from the current row.
+   *
+   * @param resultSet The {@link ResultSet}. Must have been advanced (using
+   *          {@link ResultSet#next()}) to the appropriate row.
+   * @param columns The columns, ordered according to their appearance in the
+   *          {@link ResultSet}. Use {@link ResultSetMetadataSorter} to pre-sort
+   *          your columns according to the {@link ResultSetMetaData} if you
+   *          can't be sure that the SQL will return the columns in the precise
+   *          order that you are expecting.
+   * @return A {@link Record} representation of the current {@link ResultSet}
+   *         row.
    */
-  @Override
-  public String databaseSafeStringtoRecordValue(DataType type, ResultSet resultSet, int columnIndex, String columnName) {
-    try {
-      if (type == DataType.BLOB) {
+  public Record resultSetToRecord(ResultSet resultSet, Iterable<Column> columns) {
 
-        try (InputStream inputStream = resultSet.getBinaryStream(columnIndex)) {
-          if (inputStream == null) {
-            return null;
-          }
-          try (
-            InputStreamReader reader = new InputStreamReader(
-              // Replace with java.util.Base64.Encoder once we have Java 8
-              new Base64InputStream(
-                inputStream,
-                true /* encode */,
-                -1 /* line length (unlimited) */,
-                new byte[] {} /* line terminator (none) */
-              ),
-              Charsets.UTF_8)) {
-            StringWriter stringWriter = new StringWriter();
-            IOUtils.copy(reader, stringWriter);
-            return stringWriter.toString();
-          }
+    // Provide initial sizing hint to the array. This potentially means double-traversal
+    // of the columns if the column list is not a simple list, but it's almost certainly
+    // worth it to minimise the array size and prevent resizing.
+    RecordBuilder recordBuilder = DataSetUtils.record()
+        .withInitialColumnCount(Iterables.size(columns));
+
+    int idx = 1;
+    for (Column column : columns) {
+      try {
+        switch (column.getType()) {
+          case BIG_INTEGER:
+            long longVal = resultSet.getLong(idx);
+            if (resultSet.wasNull()) {
+              recordBuilder.setObject(column.getName(), null);
+            } else {
+              recordBuilder.setLong(column.getName(), longVal);
+            }
+            break;
+          case BOOLEAN:
+            boolean boolVal = resultSet.getBoolean(idx);
+            if (resultSet.wasNull()) {
+              recordBuilder.setObject(column.getName(), null);
+            } else {
+              recordBuilder.setBoolean(column.getName(), boolVal);
+            }
+            break;
+          case INTEGER:
+            int intVal = resultSet.getInt(idx);
+            if (resultSet.wasNull()) {
+              recordBuilder.setObject(column.getName(), null);
+            } else {
+              recordBuilder.setInteger(column.getName(), intVal);
+            }
+            break;
+          case DATE:
+            Date date = resultSet.getDate(idx);
+            if (date == null) {
+              recordBuilder.setObject(column.getName(), null);
+            } else {
+              recordBuilder.setDate(column.getName(), date);
+            }
+            break;
+          case DECIMAL:
+            recordBuilder.setBigDecimal(column.getName(), resultSet.getBigDecimal(idx));
+            break;
+          case BLOB:
+            recordBuilder.setByteArray(column.getName(), resultSet.getBytes(idx));
+            break;
+          case CLOB:
+          case STRING:
+            recordBuilder.setString(column.getName(), resultSet.getString(idx));
+            break;
+          default:
+            recordBuilder.setObject(column.getName(), resultSet.getObject(idx));
+            break;
         }
-      } else if (type == DataType.DECIMAL) {
-
-        BigDecimal decimal = resultSet.getBigDecimal(columnIndex);
-
-        if (decimal == null) {
-          return null;
-        }
-        return formatDecimal(decimal);
-
-      } else if (type == DataType.BOOLEAN) {
-
-        // All implementations of boolean use a numeric type which should safely
-        // cast to a boolean
-        if (resultSet.getString(columnIndex) == null) {
-          return null;
-        }
-        return String.valueOf(resultSet.getBoolean(columnIndex));
-
-      } else if (type == DataType.DATE) {
-
-        if (resultSet.getString(columnIndex) == null) {
-          return null;
-        }
-        return LocalDate.fromDateFields(resultSet.getDate(columnIndex)).toString("yyyy-MM-dd");
-
-      } else {
-        return resultSet.getString(columnIndex);
+        idx++;
+      } catch (SQLException e) {
+        throw new RuntimeSqlException("Error retrieving value from result set with name [" + column.getName() + "]", e);
       }
-
-    } catch (SQLException e) {
-      throw new RuntimeSqlException("Error retrieving value from result set with name [" + columnName + "]", e);
-    } catch (IOException e) {
-      throw new RuntimeException("Error converting binary value from result set with name [" + columnName + "]", e);
     }
+    return recordBuilder;
   }
 
 
@@ -3473,7 +3528,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * @param aliasedFields an iterable of aliased fields.
    * @param selectAlias the alias of the select statement of a merge statement.
    * @param targetTableName the name of the target table into which to merge.
-   * @return
+   * @return The corresponding SQL
    */
   protected String matchConditionSqlForMergeFields(final Iterable<AliasedField> aliasedFields, final String selectAlias,
       final String targetTableName) {
@@ -3489,7 +3544,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
    * @param aliasedFields an iterable of aliased fields.
    * @param selectAlias the alias of the select statement of a merge statement.
    * @param targetTableName the name of the target table into which to merge.
-   * @return
+   * @return The resulting SQL
    */
   protected String assignmentSqlForMergeFields(final Iterable<AliasedField> aliasedFields, final String selectAlias,
       final String targetTableName) {
@@ -3517,39 +3572,12 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
   /**
-   * Formats decimal values as strings
-   *
-   * @param decimalString Value to format.
-   * @return The decimal value as a string.
-   */
-  private String formatDecimal(BigDecimal decimal) {
-
-    String decimalString = decimal.toPlainString();
-
-    // remove trailing zeros and clean up decimal point
-    int decimalPointIdx = decimalString.indexOf('.');
-
-    if (decimalPointIdx == -1) {
-      return decimalString;
-    }
-
-    int idx;
-    // Work back from the end of the string, looking for zeros, stopping when we find anything that isn't...
-    for (idx = decimalString.length()-1; idx>=decimalPointIdx; idx--) {
-      if (decimalString.charAt(idx) != '0') break;
-    }
-
-    // If the last thing is now the decimal point, step past that...
-    if (idx == decimalPointIdx) {
-      idx--;
-    }
-
-    return decimalString.substring(0, idx+1);
-  }
-
-
-  /**
    * Construct the old table for a change column
+   * @param table The table to change
+   * @param oldColumn The old column
+   * @param newColumn The new column
+   * @return The 'old' table
+   *
    */
   protected Table oldTableForChangeColumn(Table table, final Column oldColumn, Column newColumn) {
     return new ChangeColumn(table.getName(), oldColumn, newColumn).reverse(schema(table)).getTable(table.getName());
@@ -3576,7 +3604,7 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
 
    /**
-   * Returns true if the dialect supports window functions (e.g. PARTITION BY).
+   * @return true if the dialect supports window functions (e.g. PARTITION BY).
    *
    **/
    public abstract boolean supportsWindowFunctions();
@@ -3584,6 +3612,8 @@ public abstract class SqlDialect implements DatabaseSafeStringToRecordValueConve
 
   /**
    * Convert a {@link WindowFunction} into standards compliant SQL.
+   * @param windowFunctionField The field to convert
+   * @return The resulting SQL
    **/
   protected String getSqlFrom(final WindowFunction windowFunctionField) {
 

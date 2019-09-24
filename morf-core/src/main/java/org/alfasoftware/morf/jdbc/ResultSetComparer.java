@@ -42,20 +42,23 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import org.alfasoftware.morf.jdbc.ResultSetMismatch.MismatchType;
+import org.alfasoftware.morf.metadata.StatementParameters;
 import org.alfasoftware.morf.sql.SelectStatement;
 import org.alfasoftware.morf.stringcomparator.DatabaseEquivalentStringComparator;
 import org.apache.commons.lang.ArrayUtils;
 
-import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.inject.ImplementedBy;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
+
+
 
 /**
  * Compares two {@link ResultSet}s.
@@ -154,7 +157,7 @@ public class ResultSetComparer {
                     Provider<DatabaseEquivalentStringComparator> databaseEquivalentStringComparator) {
     this.leftSqlDialect = connectionResources.sqlDialect();
     this.rightSqlDialect = connectionResources.sqlDialect();
-    this.terminatePredicate = Optional.absent();
+    this.terminatePredicate = Optional.empty();
     this.databaseEquivalentStringComparator = databaseEquivalentStringComparator;
   }
 
@@ -168,7 +171,7 @@ public class ResultSetComparer {
                     Provider<DatabaseEquivalentStringComparator> databaseEquivalentStringComparator) {
     this.leftSqlDialect = leftConnectionResources.sqlDialect();
     this.rightSqlDialect = rightConnectionResources.sqlDialect();
-    this.terminatePredicate = Optional.absent();
+    this.terminatePredicate = Optional.empty();
     this.databaseEquivalentStringComparator = databaseEquivalentStringComparator;
   }
 
@@ -224,28 +227,56 @@ public class ResultSetComparer {
    * @return the number of mismatches between the two data sets.
    */
   public int compare(int[] keyColumns, SelectStatement left, SelectStatement right, Connection leftConnection, Connection rightConnection, CompareCallback callback) {
-    Statement statementLeft = null;
-    Statement statementRight = null;
-    ResultSet rsLeft = null;
-    ResultSet rsRight = null;
     String leftSql = leftSqlDialect.convertStatementToSQL(left);
     String rightSql = rightSqlDialect.convertStatementToSQL(right);
-    try {
-      try {
-        statementLeft = leftConnection.createStatement();
-        statementRight = rightConnection.createStatement();
-        rsLeft = statementLeft.executeQuery(leftSql);
-        rsRight = statementRight.executeQuery(rightSql);
-        return compare(keyColumns, rsLeft, rsRight, callback);
-      } finally {
-        if (statementLeft != null) statementLeft.close();
-        if (statementRight != null) statementRight.close();
-        if (rsLeft != null) rsLeft.close();
-        if (rsRight != null) rsRight.close();
-      }
+    try (Statement statementLeft = leftConnection.createStatement();
+         Statement statementRight = rightConnection.createStatement();
+         ResultSet rsLeft = statementLeft.executeQuery(leftSql);
+         ResultSet rsRight = statementRight.executeQuery(rightSql)) {
+      return compare(keyColumns, rsLeft, rsRight, callback);
     } catch (SQLException e) {
       throw new RuntimeSqlException("Error comparing SQL statements [" + leftSql + ", " + rightSql + "]", e);
     }
+  }
+
+
+  /**
+   * Given 2 data sets, return the number of mismatches between them, and
+   * callback with the details of any mismatches as they are found. This method
+   * will generate the result sets itself by executing two select statements
+   * using the supplied connection, using the provided statement parameters.
+   *
+   * Avoid using this method if it is known that there are no parameters in the statements.
+   *
+   * See {@link ResultSetMismatch} for definition of a mismatch.
+   *
+   * @param keyColumns The indexes of the key columns common to both data sets.
+   *          If this is empty, the result sets must return only one record.
+   * @param left The left hand data set {@link SelectStatement}
+   * @param right The right hand data set {@link SelectStatement}
+   * @param leftConnection a database connection to use for the left statement.
+   * @param rightConnection a database connection to use for the right statement.
+   * @param callback the mismatch callback interface implementation.
+   * @param leftStatementParameters the statement parameters to use for the left statement.
+   * @param rightStatementParameters the statement parameters to use for the right statement.
+   * @return the number of mismatches between the two data sets.
+   */
+  public int compare(int[] keyColumns, SelectStatement left, SelectStatement right, Connection leftConnection, Connection rightConnection, CompareCallback callback,
+                     StatementParameters leftStatementParameters, StatementParameters rightStatementParameters) {
+    try (NamedParameterPreparedStatement statementLeft = NamedParameterPreparedStatement.parse(leftSqlDialect.convertStatementToSQL(left)).createForQueryOn(leftConnection);
+         NamedParameterPreparedStatement statementRight = NamedParameterPreparedStatement.parse(rightSqlDialect.convertStatementToSQL(right)).createForQueryOn(rightConnection);
+         ResultSet rsLeft = parameteriseAndExecute(statementLeft, left, leftStatementParameters, leftSqlDialect);
+         ResultSet rsRight = parameteriseAndExecute(statementRight, right, rightStatementParameters, rightSqlDialect)) {
+      return compare(keyColumns, rsLeft, rsRight, callback);
+    } catch (SQLException e) {
+      throw new RuntimeSqlException("Error comparing SQL statements [" + left + ", " + right + "]", e);
+    }
+  }
+
+
+  private static ResultSet parameteriseAndExecute(NamedParameterPreparedStatement statement, SelectStatement select, StatementParameters parameters, SqlDialect dialect) throws SQLException {
+    dialect.prepareStatementParameters(statement, dialect.extractParameters(select), parameters);
+    return statement.executeQuery();
   }
 
 
@@ -258,8 +289,7 @@ public class ResultSetComparer {
    *          If this is empty, the result sets must return only one record.
    * @param left The left hand data set.
    * @param right The right hand data set.
-   * @param connection a database connection
-   * @param callback the mismatch callback interface implementation.
+   * @param callBack the mismatch callback interface implementation.
    * @return the number of mismatches between the two data sets.
    */
   public int compare(int[] keyColumns, ResultSet left, ResultSet right, CompareCallback callBack) {
@@ -486,8 +516,8 @@ public class ResultSetComparer {
    */
   @SuppressWarnings({ "rawtypes" })
   private MismatchType compareKeyColumn(ResultSet left, ResultSet right, int keyCol, int columnType, boolean leftHasRow, boolean rightHasRow) throws SQLException {
-    Optional<Comparable> leftValue = leftHasRow ? Optional.fromNullable(columnToValue(left, keyCol, columnType)) : null;
-    Optional<Comparable> rightValue = rightHasRow ? Optional.fromNullable(columnToValue(right, keyCol, columnType)) : null;
+    Optional<Comparable> leftValue = leftHasRow ? Optional.ofNullable(columnToValue(left, keyCol, columnType)) : null;
+    Optional<Comparable> rightValue = rightHasRow ? Optional.ofNullable(columnToValue(right, keyCol, columnType)) : null;
     return compareKeyValue(leftValue, rightValue);
   }
 
@@ -527,7 +557,7 @@ public class ResultSetComparer {
   private Optional<ResultSetMismatch> compareColumnValue(Comparable leftValue, Comparable rightValue, String[] keys, int columnIndex, int columnType, MismatchType mismatchTypeToRaise) {
 
     if (leftValue == null && rightValue == null) {
-      return Optional.absent();
+      return Optional.empty();
     }
 
     if (rightValue == null && leftValue != null) {
@@ -548,7 +578,7 @@ public class ResultSetComparer {
       ));
     }
 
-    return Optional.absent();
+    return Optional.empty();
   }
 
 

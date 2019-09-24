@@ -15,6 +15,7 @@
 
 package org.alfasoftware.morf.metadata;
 
+import static com.google.common.collect.FluentIterable.from;
 import static org.alfasoftware.morf.metadata.DataType.BIG_INTEGER;
 
 import java.util.Arrays;
@@ -33,6 +34,7 @@ import com.google.common.collect.Lists;
  * <p>
  * The utility methods within this class afford the methods required to create
  * representations of the following objects:
+ * </p>
  * <ul>
  * <li>{@link Schema}</li>
  * <li>{@link Table}</li>
@@ -40,7 +42,6 @@ import com.google.common.collect.Lists;
  * <li>{@link Column}</li>
  * <li>{@link Index}</li>
  * </ul>
- * </p>
  *
  * @author Copyright (c) Alfa Financial Software 2011
  */
@@ -117,7 +118,7 @@ public final class SchemaUtils {
 
 
   /**
-   * Build a {@link Schema} from a list of {@link Views}s.
+   * Build a {@link Schema} from a list of {@link View}s.
    *
    * @param views The views to use.
    * @return A {@link Schema} implementation
@@ -148,6 +149,41 @@ public final class SchemaUtils {
    */
   public static Schema copy(Schema schema) {
     return new SchemaBean(schema);
+  }
+
+
+  /**
+   * Copy a {@link Schema} and exclude.
+   *
+   * @param schema The schema to copy.
+   * @param exclusionRegExes A list of table/view regexs to exclude.
+   * @return A {@link Schema} implementation copied from the provided
+   *         {@link Schema} with excluded tables/views removed.
+   */
+  public static Schema copy(Schema schema, Collection<String> exclusionRegExes) {
+      return schema(
+        schema(from(schema.tables())
+          .filter(table -> !isMatching(exclusionRegExes, table.getName()))
+          .transform(SchemaUtils::copy)
+          .toList()),
+        schema(from(schema.views())
+          .filter(view -> !isMatching(exclusionRegExes, view.getName()))
+          .transform(SchemaUtils::copy)
+            .toList()));
+  }
+
+  /**
+   * Match table/view  name against a list of exclusion regexs
+   *
+   * @param exclusionRegExes A list of tables/views to exclude
+   * @param name Table/View name
+   * @return boolean for filter
+   */
+  private static boolean isMatching(Collection<String> exclusionRegExes, String name) {
+    return exclusionRegExes.stream()
+        .filter(regex -> name.matches(regex))
+        .findFirst()
+        .isPresent();
   }
 
 
@@ -254,8 +290,7 @@ public final class SchemaUtils {
    * Use the methods on {@link ColumnBuilder} to provide optional properties.
    * </p>
    *
-   * @param name The column name.
-   * @param type The column type.
+   * @param column The column to copy.
    * @return A new {@link ColumnBuilder} for the column.
    */
   public static ColumnBuilder column(Column column) {
@@ -447,10 +482,20 @@ public final class SchemaUtils {
 
     /**
      * Mark this column as autonumbered, with the specified starting value
+     * @param from the starting value
      *
      * @return this, for method chaining.
      */
     public ColumnBuilder autoNumbered(int from);
+
+
+    /**
+     * Set the data type on this column
+     *
+     * @param dataType the datatype to set.
+     * @return this, for method chaining.
+     */
+    public ColumnBuilder dataType(DataType dataType);
   }
 
   /**
@@ -584,6 +629,13 @@ public final class SchemaUtils {
     public ColumnBuilder notPrimaryKey() {
       return new ColumnBuilderImpl(this, isNullable(), getDefaultValue(), false, isAutoNumbered(), getAutoNumberStart());
     }
+
+
+    @Override
+    public ColumnBuilder dataType(DataType dataType) {
+      ColumnBuilderImpl column = new ColumnBuilderImpl(getName(), dataType, getWidth(), getScale());
+      return new ColumnBuilderImpl(column, isNullable(), getDefaultValue(), isPrimaryKey(), isAutoNumbered(), getAutoNumberStart());
+    }
   }
 
   /**
@@ -640,6 +692,23 @@ public final class SchemaUtils {
     List<Column> result = Lists.newArrayList();
     for (Column column : table.columns()) {
       if (column.isPrimaryKey()) {
+        result.add(column);
+      }
+    }
+    return result;
+  }
+
+
+  /**
+   * List auto-numbered columns for a given table.
+   *
+   * @param table The table
+   * @return The primary keys
+   */
+  public static List<Column> autoNumbersForTable(Table table) {
+    List<Column> result = Lists.newArrayList();
+    for (Column column : table.columns()) {
+      if (column.isAutoNumbered()) {
         result.add(column);
       }
     }

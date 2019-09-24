@@ -29,35 +29,39 @@ import org.apache.commons.lang.builder.HashCodeBuilder;
  *
  * @author Copyright (c) Alfa Financial Software 2009
  */
-public class TableReference implements DeepCopyableWithTransformation<TableReference,Builder<TableReference>>{
+public class TableReference implements DeepCopyableWithTransformation<TableReference,
+                                       Builder<TableReference>> {
 
   /**
    * The schema which holds this table (optional).
    */
-  private String schemaName;
+  private final String schemaName;
 
   /**
-   * The name of the table
+   * The name of the table. TODO make final (see {@link #setName(String)).
    */
   private String name;
 
   /**
-   * The alias to use for the table (optional).
+   * The alias to use for the table (optional). TODO make final (see {@link #as(String)}).
    */
   private String alias;
 
+  /**
+   * If set to true defines the table as a temporary table.
+   */
+  private final boolean temporary;
 
   /**
    * Constructor used to create the deep copy
    *
    * @param sourceTable the source table to copy the values from
    */
-  private TableReference(TableReference sourceTable) {
-    super();
-
+  private TableReference(TableReference sourceTable, String alias) {
     this.name = sourceTable.name;
-    this.alias = sourceTable.alias;
+    this.alias = alias;
     this.schemaName = sourceTable.schemaName;
+    this.temporary = sourceTable.temporary;
   }
 
   /**
@@ -68,6 +72,8 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
   public TableReference(String name) {
     this.name = name;
     this.alias = "";
+    this.schemaName = null;
+    this.temporary = false;
   }
 
 
@@ -79,8 +85,25 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
    * @param tableName the name of the table
    */
   public TableReference(String schemaName, String tableName) {
-    this(tableName);
+    this.name = tableName;
     this.schemaName = schemaName;
+    this.alias = "";
+    this.temporary = false;
+  }
+
+
+  /**
+   * Constructs a new table with a given name.
+   * Specifies whether the table is temporary.
+   *
+   * @param tableName The table name
+   * @param temporary true if the table is temporary.
+   */
+  public TableReference(String tableName, boolean temporary) {
+    this.name = tableName;
+    this.schemaName = null;
+    this.alias = "";
+    this.temporary = temporary;
   }
 
 
@@ -91,8 +114,12 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
    * @return an updated {@link TableReference} (this will not be a new object)
    */
   public TableReference as(String aliasName) {
-    this.alias = aliasName;
-    return this;
+    if (AliasedField.immutableDslEnabled()) {
+      return new TableReference(this, aliasName);
+    } else {
+      this.alias = aliasName;
+      return this;
+    }
   }
 
 
@@ -127,8 +154,20 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
 
 
   /**
-   * @param name the name to set
+   * Indicates whether the table is temporary.
+   *
+   * @return true if the table is a temporary table.
    */
+  public boolean isTemporary() {
+    return temporary;
+  }
+
+
+  /**
+   * @param name the name to set
+   * @deprecated Do not modify {@link TableReference} instances. This will be removed very soon.
+   */
+  @Deprecated
   public void setName(String name) {
     this.name = name;
   }
@@ -149,7 +188,7 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
    * @return TableReference a deep copy for this table
    */
   public TableReference deepCopy() {
-    return new TableReference(this);
+    return new TableReference(this, TableReference.this.alias);
   }
 
 
@@ -159,6 +198,7 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
   @Override
   public String toString() {
     StringBuilder result = new StringBuilder();
+    if(isTemporary()) result.append("/*Temporary table*/ ");
     if (!StringUtils.isEmpty(schemaName)) result.append(schemaName).append(".");
     result.append(name);
     if (!StringUtils.isEmpty(alias)) result.append(" ").append(alias);
@@ -171,7 +211,7 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
    * @return reference to a field on this table.
    */
   public FieldReference field(String fieldName) {
-    return new FieldReference(this, fieldName);
+    return FieldReference.field(this, fieldName).build();
   }
 
 
@@ -184,6 +224,7 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
       return false;
     if (obj == this)
       return true;
+    // TODO incorrect - permits other types. Can't change this - need to fix existing misuse in subtypes
     if (!(obj instanceof TableReference))
       return false;
     TableReference rhs = (TableReference)obj;
@@ -191,6 +232,7 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
         .append(schemaName, rhs.schemaName)
         .append(name, rhs.name)
         .append(alias, rhs.alias)
+        .append(temporary, rhs.temporary)
         .isEquals();
   }
 
@@ -204,6 +246,7 @@ public class TableReference implements DeepCopyableWithTransformation<TableRefer
         .append(schemaName)
         .append(name)
         .append(alias)
+        .append(temporary)
         .toHashCode();
   }
 }

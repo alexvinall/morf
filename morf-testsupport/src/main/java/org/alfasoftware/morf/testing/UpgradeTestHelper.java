@@ -66,10 +66,23 @@ import com.google.inject.Provider;
  * @author Copyright (c) Alfa Financial Software 2015
  */
 public class UpgradeTestHelper {
-  @Inject private Provider<DatabaseSchemaManager> schemaManager;
-  @Inject private ConnectionResources connectionResources;
-  @Inject private SqlScriptExecutorProvider sqlScriptExecutorProvider;
-  @Inject private Provider<DatabaseDataSetProducer> databaseDataSetProducer;
+
+  private final Provider<DatabaseSchemaManager> schemaManager;
+  private final ConnectionResources connectionResources;
+  private final SqlScriptExecutorProvider sqlScriptExecutorProvider;
+  private final Provider<DatabaseDataSetProducer> databaseDataSetProducer;
+
+
+  @Inject
+  UpgradeTestHelper(Provider<DatabaseSchemaManager> schemaManager, ConnectionResources connectionResources,
+      SqlScriptExecutorProvider sqlScriptExecutorProvider, Provider<DatabaseDataSetProducer> databaseDataSetProducer) {
+    super();
+    this.schemaManager = schemaManager;
+    this.connectionResources = connectionResources;
+    this.sqlScriptExecutorProvider = sqlScriptExecutorProvider;
+    this.databaseDataSetProducer = databaseDataSetProducer;
+  }
+
 
   /**
    *  Store UUIDs that have been encountered to check for uniqueness. This is only within the module, but it's better than nothing.
@@ -78,6 +91,8 @@ public class UpgradeTestHelper {
 
   /**
    * Test the upgrade step.
+   * @param finalSchema The resulting schema
+   * @param upgradeSteps The sequence of upgrade steps
    */
   public void testUpgrades(Schema finalSchema, Iterable<Class<? extends UpgradeStep>> upgradeSteps) {
     Collection<Class<? extends UpgradeStep>> orderedSteps = new UpgradeGraph(upgradeSteps).orderedSteps();
@@ -147,7 +162,8 @@ public class UpgradeTestHelper {
 
 
   /**
-   * Optionally validate that the upgrades are package-visible.
+   * Validate that the upgrades are package-visible.
+   * @param upgradeSteps The sequence of upgrade steps
    */
   public void validateStepsArePackageVisible(Iterable<Class<? extends UpgradeStep>> upgradeSteps) {
     for (Class<? extends UpgradeStep> upgradeStepClass : upgradeSteps) {

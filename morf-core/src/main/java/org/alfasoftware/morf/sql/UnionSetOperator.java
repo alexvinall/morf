@@ -31,7 +31,7 @@ import org.alfasoftware.morf.util.ObjectTreeTraverser;
  *
  * @author Copyright (c) Alfa Financial Software 2012
  */
-public class UnionSetOperator implements SetOperator{
+public class UnionSetOperator implements SetOperator {
 
   /**
    * Identifies the duplicate row elimination strategy for UNION statements.
@@ -80,7 +80,8 @@ public class UnionSetOperator implements SetOperator{
   /**
    * Constructor used to create a deep copy of a union statement.
    *
-   * @param sourceUnion the union statement to create the deep copy from
+   * @param unionStrategy the union strategy to use
+   * @param childSelect the second part of the UNION statement
    */
   private UnionSetOperator(UnionStrategy unionStrategy, SelectStatement childSelect) {
     this.selectStatement = childSelect;
@@ -162,8 +163,38 @@ public class UnionSetOperator implements SetOperator{
   }
 
 
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + ((selectStatement == null) ? 0 : selectStatement.hashCode());
+    result = prime * result + ((unionStrategy == null) ? 0 : unionStrategy.hashCode());
+    return result;
+  }
+
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj)
+      return true;
+    if (obj == null)
+      return false;
+    if (getClass() != obj.getClass())
+      return false;
+    UnionSetOperator other = (UnionSetOperator) obj;
+    if (selectStatement == null) {
+      if (other.selectStatement != null)
+        return false;
+    } else if (!selectStatement.equals(other.selectStatement))
+      return false;
+    if (unionStrategy != other.unionStrategy)
+      return false;
+    return true;
+  }
+
+
   /**
-   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(org.alfasoftware.morf.sql.ObjectTreeTraverser.VisitorDispatcher)
+   * @see org.alfasoftware.morf.util.ObjectTreeTraverser.Driver#drive(ObjectTreeTraverser)
    */
   @Override
   public void drive(ObjectTreeTraverser traverser) {

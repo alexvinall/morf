@@ -15,13 +15,11 @@
 
 package org.alfasoftware.morf.sql;
 
-import static org.alfasoftware.morf.metadata.DataType.STRING;
 import static org.alfasoftware.morf.metadata.SchemaUtils.column;
 import static org.alfasoftware.morf.sql.element.Criterion.eq;
 
+import java.math.BigDecimal;
 import java.util.List;
-
-import org.joda.time.LocalDate;
 
 import org.alfasoftware.morf.metadata.Column;
 import org.alfasoftware.morf.metadata.DataType;
@@ -42,6 +40,7 @@ import org.alfasoftware.morf.sql.element.SqlParameter;
 import org.alfasoftware.morf.sql.element.TableReference;
 import org.alfasoftware.morf.sql.element.WhenCondition;
 import org.alfasoftware.morf.sql.element.WindowFunction;
+import org.joda.time.LocalDate;
 
 /**
  * Utility methods for creating SQL constructs.
@@ -54,7 +53,9 @@ public class SqlUtils {
   /**
    * Constructs an update statement.
    *
-   * @see UpdateStatement#UpdateStatement(TableReference)
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link UpdateStatement#update(TableReference)} for preference.</p>
+   *
    * @param tableReference the database table to update
    * @return {@link UpdateStatement}
    */
@@ -79,6 +80,9 @@ public class SqlUtils {
    * If no fields are specified then this is equivalent of selecting all
    * fields (i.e. {@code SELECT * FROM x}).
    *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link SelectStatement#select(AliasedFieldBuilder...)} for preference.</p>
+   *
    * @param fields an array of fields that should be selected
    * @return {@link SelectStatement}
    */
@@ -91,6 +95,12 @@ public class SqlUtils {
    * Constructs a Select Statement which optionally selects on a subset of fields.
    * If no fields are specified then this is equivalent of selecting all
    * fields (i.e. {@code SELECT * FROM x}).
+   *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link SelectStatement#select(AliasedFieldBuilder...)} for preference. For
+   * example:</p>
+   *
+   * <pre>SelectStatement.select().fields(myFields).from(foo).build();</pre>
    *
    * @param fields fields that should be selected
    * @return {@link SelectStatement}
@@ -105,6 +115,12 @@ public class SqlUtils {
    * If no fields are specified then this is equivalent of selecting all
    * fields (i.e. {@code SELECT DISTINCT * FROM x}).
    *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link SelectStatement#select(AliasedFieldBuilder...)} for preference. For
+   * example:</p>
+   *
+   * <pre>SelectStatement.select(myFields).distinct().from(foo).build();</pre>
+   *
    * @param fields an array of fields that should be selected
    * @return {@link SelectStatement}
    */
@@ -114,9 +130,12 @@ public class SqlUtils {
 
 
   /**
-   * Constructs a Select First Statement
+   * Constructs a Select First Statement.
    *
-   * @param fields an array of fields that should be selected
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link SelectFirstStatement#selectFirst(AliasedFieldBuilder)} for preference.</p>
+   *
+   * @param field the field that should be selected
    * @return {@link SelectStatement}
    */
   public static SelectFirstStatement selectFirst(AliasedFieldBuilder field) {
@@ -127,6 +146,9 @@ public class SqlUtils {
   /**
    * Constructs an Insert Statement.
    *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link InsertStatement#insert()} for preference.</p>
+   *
    * @return {@link InsertStatement}
    */
   public static InsertStatement insert() {
@@ -136,6 +158,9 @@ public class SqlUtils {
 
   /**
    * Constructs a Delete Statement.
+   *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link DeleteStatement#delete(TableReference)} for preference.</p>
    *
    * @param table the database table to delete from.
    * @return {@link DeleteStatement}
@@ -150,6 +175,9 @@ public class SqlUtils {
    * a record into a table depending on whether a condition exists in
    * the table.
    *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link MergeStatement#merge()} for preference.</p>
+   *
    * @return {@link MergeStatement}
    */
   public static MergeStatement merge() {
@@ -159,6 +187,9 @@ public class SqlUtils {
 
   /**
    * Constructs a Truncate Statement.
+   *
+   * <p>Usage is discouraged; this method will be deprecated at some point. Use
+   * {@link TruncateStatement#truncate(TableReference)} for preference.</p>
    *
    * @param table The table to truncate.
    * @return The statement.
@@ -174,12 +205,12 @@ public class SqlUtils {
    * For example, in order to generate "(a + b) / c" SQL Math expression, we
    * need to put first two elements (first subexpression) into a bracket. That
    * could be achieved by the following DSL statement.
+   * </p>
    *
    * <pre>
    * bracket(field(&quot;a&quot;).plus(field(&quot;b&quot;))).divideBy(field(&quot;c&quot;))
    * </pre>
    *
-   * </p>
    *
    * @param expression the input Math expression that will be wrapped with
    *          brackets in output SQL
@@ -212,6 +243,17 @@ public class SqlUtils {
    * @return {@link FieldLiteral}
    */
   public static FieldLiteral literal(String value) {
+    return new FieldLiteral(value);
+  }
+
+
+  /**
+   * Constructs a new {@link FieldLiteral} with a {@link BigDecimal} source.
+   *
+   * @param value the literal value to use
+   * @return {@link FieldLiteral}
+   */
+  public static FieldLiteral literal(BigDecimal value) {
     return new FieldLiteral(value);
   }
 
@@ -300,7 +342,7 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
   /**
    * Constructs a new SQL named parameter from a column.
    *
-   * @param name the parameter column.
+   * @param column the parameter column.
    * @return {@link SqlParameter}
    */
   public static SqlParameter parameter(Column column) {
@@ -501,7 +543,7 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
      * @param whenClauses the {@link WhenCondition} portions of the case statement
      */
     private CaseStatementBuilder(WhenCondition... whenClauses) {
-      this.whenClauses = whenClauses;
+      this.whenClauses = whenClauses.clone();
     }
 
 
@@ -577,7 +619,32 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
      * @return {@link Cast} as string of given length
      */
     public Cast asString(int length) {
-      return asType(STRING, length);
+      return asType(DataType.STRING, length);
+    }
+
+
+    /**
+     * Returns a SQL DSL expression to return the field CASTed to
+     * a decimal of the specified length
+     *
+     * @param length length of the decimal cast
+     * @return {@link Cast} as decimal of given length
+     */
+    public Cast asDecimal(int length) {
+      return asType(DataType.DECIMAL, length);
+    }
+
+
+    /**
+     * Returns a SQL DSL expression to return the field CASTed to
+     * a decimal of the specified length
+     *
+     * @param length length of the decimal cast
+     * @param scale scale of the decimal cast
+     * @return {@link Cast} as decimal of given length
+     */
+    public Cast asDecimal(int length, int scale) {
+      return asType(DataType.DECIMAL, length, scale);
     }
 
 
@@ -666,10 +733,10 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
    * <p>The call structure imitates the end SQL and is structured as follows:</p>
    *
    * <blockquote><pre>
-   *   SqlUtils.windowFunction([function])                      = [function]
-   *        |----> .partitionBy([fields]...)                    = [function] OVER (PARTITION BY [fields])
-   *                |----> .orderBy([fields]...)                = [function] OVER (PARTITION BY [fields] ORDER BY [fields])
-   *        |----> .orderBy([fields]...)                        = [function] OVER (ORDER BY [fields])
+   *   SqlUtils.windowFunction([function])                         = [function]
+   *        |----&gt; .partitionBy([fields]...)                    = [function] OVER (PARTITION BY [fields])
+   *                |----&gt; .orderBy([fields]...)                = [function] OVER (PARTITION BY [fields] ORDER BY [fields])
+   *        |----&gt; .orderBy([fields]...)                        = [function] OVER (ORDER BY [fields])
    *  </pre></blockquote>
    *
    * Restrictions:
@@ -679,6 +746,8 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
    * <li>The default direction for fields in orderBy(..) is ASC.</li>
    * </ul>
    * @author Copyright (c) Alfa Financial Software 2017
+   * @param function The function
+   * @return The windowing function builder
    */
   public static WindowFunction.Builder windowFunction(Function function) {
     return WindowFunction.over(function);
@@ -700,7 +769,7 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
     /**
      * Specifies the data type for the parameter.
      *
-     * @param dataType
+     * @param dataType The data type
      * @return the next phase of the parameter builder.
      */
     public SqlParameterWidthBuilder type(DataType dataType) {
@@ -726,7 +795,7 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
      * Specifies the width of the parameter and
      * returns the constructed parameter.
      *
-     * @param width
+     * @param width The width
      * @return the {@link SqlParameter}.
      */
     public SqlParameter width(int width) {
@@ -737,8 +806,8 @@ parameter("name").type(DataType.DECIMAL).width(13,2)</pre>
      * Specifies the width and scale of the parameter and
      * returns the constructed parameter.
      *
-     * @param width
-     * @param scale
+     * @param width The width
+     * @param scale The scale
      * @return the {@link SqlParameter}.
      */
     public SqlParameter width(int width, int scale) {

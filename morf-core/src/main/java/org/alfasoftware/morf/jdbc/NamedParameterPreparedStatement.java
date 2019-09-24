@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.alfasoftware.morf.sql.element.SqlParameter;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -37,9 +38,11 @@ import com.google.common.collect.Maps;
  * A wrapped around {@link PreparedStatement} which allows for named parameters.  Parser is the
  * one published by Adam Crume, modified to play nicely with our existing database code.
  *
- * @see http://www.javaworld.com/article/2077706/core-java/named-parameters-for-preparedstatement.html
+ * @see <a href="http://www.javaworld.com/article/2077706/core-java/named-parameters-for-preparedstatement.html">
+ *     Named parameters for prepared statements</a>
+ *
  */
-public class NamedParameterPreparedStatement {
+public class NamedParameterPreparedStatement implements AutoCloseable {
 
   /** The statement this object is wrapping. */
   private final PreparedStatement statement;
@@ -87,6 +90,30 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#execute()
+   * <P>
+   * Executes the SQL statement in this <code>PreparedStatement</code> object,
+   * which may be any kind of SQL statement.
+   * Some prepared statements return multiple results; the <code>execute</code>
+   * method handles these complex statements as well as the simpler
+   * form of statements handled by the methods <code>executeQuery</code>
+   * and <code>executeUpdate</code>.
+   * </P><P>
+   * The <code>execute</code> method returns a <code>boolean</code> to
+   * indicate the form of the first result.  You must call either the method
+   * <code>getResultSet</code> or <code>getUpdateCount</code>
+   * to retrieve the result; you must call <code>getMoreResults</code> to
+   * move to any subsequent result(s).</P>
+   *
+   * @return <code>true</code> if the first result is a <code>ResultSet</code>
+   *         object; <code>false</code> if the first result is an update
+   *         count or there is no result
+   * @exception SQLException if a database access error occurs;
+   * this method is called on a closed <code>PreparedStatement</code>
+   * or an argument is supplied to this method
+   * @throws SQLTimeoutException when the driver has determined that the
+   * timeout value that was specified by the {@code setQueryTimeout}
+   * method has been exceeded and has at least attempted to cancel
+   * the currently running {@code Statement}
    */
   public boolean execute() throws SQLException {
     return statement.execute();
@@ -95,6 +122,15 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#executeQuery()
+   * @return a <code>ResultSet</code> object that contains the data produced by the
+   *         query; never <code>null</code>
+   * @exception SQLException if a database access error occurs;
+   * this method is called on a closed  <code>PreparedStatement</code> or the SQL
+   *            statement does not return a <code>ResultSet</code> object
+   * @throws SQLTimeoutException when the driver has determined that the
+   * timeout value that was specified by the {@code setQueryTimeout}
+   * method has been exceeded and has at least attempted to cancel
+   * the currently running {@code Statement}
    */
   public ResultSet executeQuery() throws SQLException {
     this.statement.setFetchDirection(ResultSet.FETCH_FORWARD);
@@ -104,6 +140,15 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#executeUpdate()
+   * @return either (1) the row count for SQL Data Manipulation Language (DML) statements
+   *         or (2) 0 for SQL statements that return nothing
+   * @exception SQLException if a database access error occurs;
+   * this method is called on a closed  <code>PreparedStatement</code>
+   * or the SQL statement returns a <code>ResultSet</code> object
+   * @throws SQLTimeoutException when the driver has determined that the
+   * timeout value that was specified by the {@code setQueryTimeout}
+   * method has been exceeded and has at least attempted to cancel
+   * the currently running {@code Statement}
    */
   public int executeUpdate() throws SQLException {
     return statement.executeUpdate();
@@ -112,7 +157,9 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#close()
+   * @exception SQLException if a database access error occurs
    */
+  @Override
   public void close() throws SQLException {
     statement.close();
   }
@@ -120,6 +167,13 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#addBatch()
+   * @exception SQLException if a database access error occurs,
+   * this method is called on a closed <code>Statement</code> or the
+   * driver does not support batch statements.
+   * @throws SQLTimeoutException when the driver has determined that the
+   * timeout value that was specified by the {@code setQueryTimeout}
+   * method has been exceeded and has at least attempted to cancel
+   * the currently running {@code Statement}
    */
   public void addBatch() throws SQLException {
     statement.addBatch();
@@ -128,6 +182,16 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#executeBatch()
+   * @return an array of update counts containing one element for each
+   * command in the batch.  The elements of the array are ordered according
+   * to the order in which commands were added to the batch.
+   * @exception SQLException if a database access error occurs,
+   * this method is called on a closed <code>Statement</code> or the
+   * driver does not support batch statements.
+   * @throws SQLTimeoutException when the driver has determined that the
+   * timeout value that was specified by the {@code setQueryTimeout}
+   * method has been exceeded and has at least attempted to cancel
+   * the currently running {@code Statement}
    */
   public int[] executeBatch() throws SQLException {
     return statement.executeBatch();
@@ -136,6 +200,9 @@ public class NamedParameterPreparedStatement {
 
   /**
    * @see PreparedStatement#clearBatch()
+   * @exception SQLException if a database access error occurs,
+   *  this method is called on a closed <code>Statement</code> or the
+   * driver does not support batch updates
    */
   public void clearBatch() throws SQLException {
     statement.clearBatch();
@@ -143,7 +210,11 @@ public class NamedParameterPreparedStatement {
 
 
   /**
+   * @param rows the number of rows to fetch
    * @see PreparedStatement#setFetchSize(int)
+   * @exception SQLException if a database access error occurs,
+   * this method is called on a closed <code>Statement</code> or the
+   *        condition {@code rows >= 0} is not satisfied.
    */
   public void setFetchSize(int rows) throws SQLException {
     statement.setFetchSize(rows);
@@ -180,6 +251,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setBoolean(SqlParameter parameter, final boolean value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -198,6 +270,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setObject(SqlParameter parameter, final Object value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -216,6 +289,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setDate(SqlParameter parameter, final Date value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -234,6 +308,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setBigDecimal(SqlParameter parameter, final BigDecimal value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -252,6 +327,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setString(SqlParameter parameter, final String value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -270,6 +346,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setInt(SqlParameter parameter, final int value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -288,6 +365,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setLong(SqlParameter parameter, final long value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -306,6 +384,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setBinaryStream(SqlParameter parameter, final InputStream value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -324,6 +403,7 @@ public class NamedParameterPreparedStatement {
    * @param parameter the parameter metadata.
    * @param value the parameter value.
    * @return this, for method chaining
+   * @exception SQLException if an error occurs when setting the parameter
    */
   public NamedParameterPreparedStatement setBlob(SqlParameter parameter, final byte[] value) throws SQLException {
     forEachOccurrenceOfParameter(parameter, new Operation() {
@@ -331,7 +411,7 @@ public class NamedParameterPreparedStatement {
       public void apply(int parameterIndex) throws SQLException {
         Blob blob = statement.getConnection().createBlob();
         int written = blob.setBytes(1 /* odd position thing */, value);
-        if (written != value.length) throw new IllegalStateException("Failed to write all bytes to BLOB");
+        if (written != value.length) throw new IllegalStateException("Failed to write all bytes to BLOB (written = " + written + ", actual = " + value.length + ")");
         statement.setBlob(parameterIndex, blob);
       }
     });
@@ -346,10 +426,10 @@ public class NamedParameterPreparedStatement {
    * If the limit is exceeded, the excess
    * rows are silently dropped.
    *
-   * @param max the new max rows limit; zero means there is no limit
+   * @param maxRows the new max rows limit; zero means there is no limit
    * @exception SQLException if a database access error occurs,
    * this method is called on a closed <code>Statement</code>
-   *            or the condition max >= 0 is not satisfied
+   *            or the condition maxRows &gt;= 0 is not satisfied
    * @see Statement#setMaxRows(int)
    */
   public void setMaxRows(Integer maxRows) throws SQLException {
@@ -364,7 +444,7 @@ public class NamedParameterPreparedStatement {
    * {@link SQLTimeoutException}.
    *
    * @param queryTimeout timeout in <b>seconds</b>
-   * @throws SQLException
+   * @exception SQLException if an error occurs when setting the timeout
    */
   public void setQueryTimeout(Integer queryTimeout) throws SQLException {
     statement.setQueryTimeout(queryTimeout);
@@ -436,7 +516,7 @@ public class NamedParameterPreparedStatement {
      *
      * @param connection the connection
      * @return the prepared statement.
-     * @throws SQLException
+     * @throws SQLException if the statement could not be created
      */
     public NamedParameterPreparedStatement createFor(Connection connection) throws SQLException {
       return new NamedParameterPreparedStatement(connection, query, indexMap, false, this);
@@ -450,7 +530,7 @@ public class NamedParameterPreparedStatement {
      *
      * @param connection the connection
      * @return the prepared statement.
-     * @throws SQLException
+     * @throws SQLException if the statement could not be created
      */
     public NamedParameterPreparedStatement createForQueryOn(Connection connection) throws SQLException {
       return new NamedParameterPreparedStatement(connection, query, indexMap, true, this);
@@ -462,7 +542,6 @@ public class NamedParameterPreparedStatement {
      * into the map, and the parsed query is returned.
      *
      * @param query query to parse
-     * @param paramMap map to hold parameter-index mappings
      * @return the parsed query
      */
     private String parse(String query) {

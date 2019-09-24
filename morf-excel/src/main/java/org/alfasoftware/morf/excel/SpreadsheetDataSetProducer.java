@@ -28,13 +28,14 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang.StringUtils;
-
 import org.alfasoftware.morf.dataset.DataSetProducer;
 import org.alfasoftware.morf.dataset.Record;
+import org.alfasoftware.morf.metadata.DataSetUtils;
+import org.alfasoftware.morf.metadata.DataSetUtils.RecordBuilder;
 import org.alfasoftware.morf.metadata.Schema;
 import org.alfasoftware.morf.metadata.Table;
 import org.alfasoftware.morf.metadata.View;
+import org.apache.commons.lang.StringUtils;
 
 import jxl.Cell;
 import jxl.Hyperlink;
@@ -77,10 +78,6 @@ public class SpreadsheetDataSetProducer implements DataSetProducer {
     for (InputStream stream : excelFiles) {
       parseWorkbook(stream);
     }
-
-    // Add on the translations
-    // FIXME - Translation support removed pending further improvements.
-    //tables.put("ParameterTranslation", translations);
   }
 
 
@@ -93,15 +90,15 @@ public class SpreadsheetDataSetProducer implements DataSetProducer {
    * @return the record representing the translation
    */
   private Record createTranslationRecord(final int id, final String translation) {
-    final RecordMap record = new RecordMap();
-    record.setValue("translationText", translation);
+    final RecordBuilder record = DataSetUtils.record();
+    record.setString("translationText", translation);
     final Date now = new Date();
-    record.setValue("changeDate", new SimpleDateFormat("yyyyMMdd").format(now));
-    record.setValue("changedTime", new SimpleDateFormat("hhmmss").format(now));
-    record.setValue("localeSequenceNumber", "1"); // Assume locale 1 for translations on initial upload
-    record.setValue("translationSequenceNumber", Integer.toString(id));
-    record.setValue("translationId", Integer.toString(id));
-    record.setValue("id", Integer.toString(id));
+    record.setString("changeDate", new SimpleDateFormat("yyyyMMdd").format(now));
+    record.setString("changedTime", new SimpleDateFormat("hhmmss").format(now));
+    record.setInteger("localeSequenceNumber", 1); // Assume locale 1 for translations on initial upload
+    record.setInteger("translationSequenceNumber", id);
+    record.setInteger("translationId", id);
+    record.setInteger("id", id);
     return record;
   }
 
@@ -184,40 +181,6 @@ public class SpreadsheetDataSetProducer implements DataSetProducer {
       return matcher.group(1);
     } else {
       return hyperlink.getLocation();
-    }
-  }
-
-
-  /**
-   * A simple record that uses a map to store the values.
-   *
-   * @author Copyright (c) Alfa Financial Software 2010
-   */
-  private static class RecordMap implements Record {
-
-    /**
-     * The name/value pairs for this record
-     */
-    private final Map<String, String> values = new HashMap<>();
-
-    /**
-     * {@inheritDoc}
-     *
-     * @see org.alfasoftware.morf.dataset.Record#getValue(java.lang.String)
-     */
-    @Override
-    public String getValue(String name) {
-      return values.get(name.toLowerCase());
-    }
-
-    /**
-     * Sets the value in the given column
-     *
-     * @param name of the column to set
-     * @param value to set
-     */
-    public void setValue(String name, String value) {
-      values.put(name.toLowerCase(), value);
     }
   }
 
@@ -397,17 +360,17 @@ public class SpreadsheetDataSetProducer implements DataSetProducer {
       translationId = 0;
     }
 
-    final RecordMap record = new RecordMap();
+    final RecordBuilder record = DataSetUtils.record();
     for (Entry<String, Integer> column : columnHeadingsMap.entrySet()) {
       if (column.getValue() < cells.length) {
-        record.setValue(column.getKey(), cells[column.getValue()].getContents());
+        record.setString(column.getKey(), cells[column.getValue()].getContents());
       } else {
         // If the cell is actually specified then assume it is default blank
-        record.setValue(column.getKey(), "");
+        record.setString(column.getKey(), "");
       }
     }
-    record.setValue("id", Long.toString(id));
-    record.setValue("translationId", Integer.toString(translationId));
+    record.setLong("id", id);
+    record.setInteger("translationId", translationId);
     return record;
   }
 

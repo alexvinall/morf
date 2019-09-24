@@ -18,6 +18,7 @@ package org.alfasoftware.morf.jdbc;
 import javax.sql.DataSource;
 
 import org.alfasoftware.morf.jdbc.SqlScriptExecutor.SqlScriptVisitor;
+
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.util.Providers;
@@ -37,6 +38,7 @@ public class SqlScriptExecutorProvider implements Provider<SqlScriptExecutor> {
    *
    * @param dataSource The {@link DataSource} to instantiate the
    *          {@link SqlScriptExecutorProvider} for
+   * @param sqlDialect The dialect to use
    */
   @Inject
   public SqlScriptExecutorProvider(final DataSource dataSource, Provider<SqlDialect> sqlDialect) {
@@ -66,7 +68,8 @@ public class SqlScriptExecutorProvider implements Provider<SqlScriptExecutor> {
 
 
   /**
-   * @param dataSource
+   * @param dataSource The {@link DataSource} to instantiate the
+   *          {@link SqlScriptExecutorProvider} for
    * @deprecated This constructor does not work for all uses. Use {@link #SqlScriptExecutorProvider(DataSource, SqlDialect)}
    */
   @Deprecated
@@ -123,6 +126,7 @@ public class SqlScriptExecutorProvider implements Provider<SqlScriptExecutor> {
      */
     @Override
     public void executionStart() {
+      // Defaults to no-op
     }
 
 
@@ -131,6 +135,7 @@ public class SqlScriptExecutorProvider implements Provider<SqlScriptExecutor> {
      */
     @Override
     public void beforeExecute(String sql) {
+      // Defaults to no-op
     }
 
 
@@ -140,6 +145,7 @@ public class SqlScriptExecutorProvider implements Provider<SqlScriptExecutor> {
      */
     @Override
     public void afterExecute(String sql, long numberOfRowsUpdated) {
+      // Defaults to no-op
     }
 
 
@@ -148,6 +154,7 @@ public class SqlScriptExecutorProvider implements Provider<SqlScriptExecutor> {
      */
     @Override
     public void executionEnd() {
+      // Defaults to no-op
     }
   }
 }
