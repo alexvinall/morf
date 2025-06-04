@@ -42,6 +42,7 @@ As we work on those, we will be expanding the [Start here](https://github.com/al
 - Clone or dump a full database, including schema and data
 - Create a dump of a MySQL database as XML, restore to Oracle
 - Copy a live NuoDB database directly into in-memory H2
+- Integrate with Amazon Redshift alongside traditional RDBMS engines
 - Run a JUnit test over an in-memory H2 database using a snapshot from a live Oracle environment
 - Automatically run missing upgrades after restoring from a snapshot
 
