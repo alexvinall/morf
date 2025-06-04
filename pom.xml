@@ -24,6 +24,7 @@
     <module>morf-nuodb</module>
     <module>morf-oracle</module>
     <module>morf-postgresql</module>
+    <module>morf-redshift</module>
     <module>morf-sqlserver</module>
     <module>morf-integration-test</module>
   </modules>
@@ -225,6 +226,11 @@
       <dependency>
         <groupId>org.alfasoftware</groupId>
         <artifactId>morf-postgresql</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.alfasoftware</groupId>
+        <artifactId>morf-redshift</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
